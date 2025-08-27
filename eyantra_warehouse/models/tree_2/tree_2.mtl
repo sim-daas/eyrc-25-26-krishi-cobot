@@ -1,0 +1,45 @@
+# Blender 4.5.2 LTS MTL File: 'KrishiCobotWorldblend.blend'
+# www.blender.org
+
+newmtl Material.021
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+illum 2
+map_Kd combobranch.png
+map_Ks home/joel/Downloads/Documents/arbor/combobranchspec.png
+map_d combobranch.png
+map_Bump -bm 1.000000 home/joel/Downloads/Documents/arbor/combobranchnormal.png
+
+newmtl Material.022
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd bark003-color.jpg
+map_Ks bark003-spec.jpg
+map_Bump -bm 1.000000 bark003-normal.jpg
+
+newmtl Material.024
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 1.000000 1.000000 1.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+illum 2
+map_Kd combobranch.png
+map_d combobranch.png
+
+newmtl Material.025
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+illum 2
+map_Kd combobranch3.png
+map_Ks combobranch3spec.png
+map_d combobranch3.png
+map_Bump -bm 1.000000 combobranch3normal.png
