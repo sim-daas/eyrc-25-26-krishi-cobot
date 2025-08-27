@@ -1,4 +1,3 @@
-# eyrc-25-26-kc
 # Krishi Cobot (KC) theme for eYRC 2025-26
 
 # Task 0
@@ -10,7 +9,7 @@ colcon build
 Source the workspace
 ```sh
 source install/setup.bash
-```sss
+```
 To Launch the gazebo-
 
 ```sh
