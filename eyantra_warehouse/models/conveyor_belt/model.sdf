@@ -21,18 +21,17 @@
       </visual>
 
       <collision name="belt_collision">
-        <pose>0 0 0 0 0 0</pose>
         <geometry>
-          <mesh>
-            <uri>model://conveyor_belt/meshes/conveyor_belt.dae</uri>
-            <scale>1 1 1</scale>
-          </mesh>
+          <box>
+            <size>0.463 1.2 0.743</size>
+          </box>
         </geometry>
+        <pose>0 0 0.3715 0 0 0</pose>
       </collision>
     </link>
 
     <!-- ==== Link 2: Moving belt surface ==== -->
-    <link name="belt_moving">
+    <!-- <link name="belt_moving">
       <pose>0 0 0.741 0 0 0</pose>
 
       <inertial>
@@ -66,10 +65,10 @@
           </torsional>
         </surface>
       </collision>
-    </link>
+    </link> -->
 
     <!-- ==== Joint ==== -->
-    <joint name="belt_joint" type="prismatic">
+    <!-- <joint name="belt_joint" type="prismatic">
       <parent>belt_fixed</parent>
       <child>belt_moving</child>
       <axis>
@@ -79,7 +78,7 @@
           <upper>0.01</upper>
         </limit>
       </axis>
-    </joint>
+    </joint> -->
 
   </model>
 </sdf>

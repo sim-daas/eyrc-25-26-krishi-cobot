@@ -23,7 +23,7 @@
         <cast_shadows>0</cast_shadows>
         <geometry>
           <mesh>
-            <uri>model://arm_base/meshes/arm_base.dae</uri>
+            <uri>model://arm_base/meshes/arm_base_default.dae</uri>
           </mesh>
         </geometry>
         <material>
