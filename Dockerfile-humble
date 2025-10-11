@@ -1,0 +1,87 @@
+FROM osrf/ros:humble-desktop
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Basic ROS 2 setup in .bashrc
+RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc
+
+# Install essential tools first
+RUN apt-get update && apt-get install -y \
+    git \
+    python3-pip \
+    python3-colcon-common-extensions \
+    tmux \
+    ruby \
+    ruby-dev \
+    build-essential \
+    wget \
+    vim \
+    curl \
+    lsb-release \
+    gnupg2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add OSRF Gazebo repository (exactly as per e-Yantra requirements)
+RUN curl https://packages.osrfoundation.org/gazebo.gpg --output /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null
+
+# Install Ignition Fortress (exactly as per e-Yantra requirements)
+RUN apt-get update && apt-get install -y \
+    ignition-fortress \
+    ros-humble-slam-toolbox \
+    ros-humble-nav2-bringup \
+    ros-humble-nav2-map-server \
+    ros-humble-nav2-lifecycle-manager \
+    ros-humble-nav2-controller \
+    ros-humble-nav2-planner \
+    ros-humble-nav2-behavior-tree \
+    ros-humble-nav2-costmap-2d \
+    ros-humble-nav2-msgs \
+    ros-humble-nav2-util \
+    ros-humble-nav2-rviz-plugins \
+    ros-humble-joint-state-publisher-gui \
+    ros-humble-ros2-control \
+    ros-humble-ros2-controllers \
+    ros-humble-robot-localization \
+    ros-humble-ros-gz \
+    ros-humble-ros-gz-bridge \
+    ros-humble-ign-ros2-control \
+    ros-humble-teleop-twist-keyboard \
+    ros-humble-robot-state-publisher \
+    ros-humble-joint-state-publisher \
+    ros-humble-topic-tools \
+    ros-humble-xacro \
+    ros-humble-tf-transformations \
+    ros-humble-joint-state-broadcaster \
+    ros-humble-joint-trajectory-controller \
+    ros-humble-controller-manager \
+    ros-humble-gazebo-msgs \
+    ros-dev-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install required Python libraries
+RUN pip3 install \
+    python-fcl \
+    urdf-parser-py \
+    networkx==3.4.2 \
+    transforms3d \
+    opencv-contrib-python==4.7.0.72 \
+    numpy==1.21.5 \
+    trimesh
+
+# Install tmuxinator gem
+RUN gem install tmuxinator
+
+# Install CPU-only computer vision libraries for fallback
+#RUN pip3 install opencv-python-headless ultralytics
+
+# Create ROS 2 workspace and clone robobase package
+RUN mkdir -p /root/robows/src && \
+    cd /root/robows/src && \
+    #    git clone https://github.com/sim-daas/robobase && \
+    cd /root/robows && \
+    colcon build --symlink-install && \
+    echo "source /root/robows/install/setup.bash" >> /root/.bashrc
+
+# Set working directory
+WORKDIR /root/

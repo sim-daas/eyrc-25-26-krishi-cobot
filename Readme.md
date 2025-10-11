@@ -2,6 +2,15 @@
 
 This repository contains the simulation setup for the Krishi Cobot (eYantra Robotics Competition 2025-26).
 
+## System setup
+
+run the following in your bash shell on host system
+
+```bash
+docker build -t robobase:humble -f Dockerfile-humble .
+./docker-run.sh robobase:humble e-yantra ~/eyrc-25-26-krishi-cobot:/root/robows/src/eyrc-25-26
+```
+
 ## Launch Commands
 
 To launch Gazebo World Only for Task 1:
