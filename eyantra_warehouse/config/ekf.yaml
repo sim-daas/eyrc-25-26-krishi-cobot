@@ -1,7 +1,7 @@
 ekf_filter_node:
   ros__parameters:
     # GENERAL PARAMETERS
-    frequency: 30.0                  # Update frequency in Hz
+    frequency: 100.0                  # Update frequency in Hz
     two_d_mode: true                 # Crucial for flat-ground robots
     publish_tf: true                 # We want the EKF to publish the odom->base_footprint transform
 
