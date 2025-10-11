@@ -8,6 +8,7 @@ run the following in your bash shell on host system
 
 ```bash
 docker build -t robobase:humble -f Dockerfile-humble .
+xhost +
 ./docker-run.sh robobase:humble e-yantra ~/eyrc-25-26-krishi-cobot:/root/robows/src/eyrc-25-26
 ```
 
