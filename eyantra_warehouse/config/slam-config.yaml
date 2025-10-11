@@ -1,0 +1,39 @@
+slam_toolbox:
+  ros__parameters:
+    # MANDATORY PARAMETERS
+    odom_frame: odom
+    map_frame: map
+    base_frame: ebot_base_link
+    scan_topic: /scan
+
+    # map_file_name: "/root/robows/src/robobase/mobilerobo/maps/house_graph"
+    # use_prior_map: true
+    # map_start_pose: [0.0, 0.0, 0.0]
+
+
+    # MODE: Can be 'mapping' or 'localization'.
+    mode: mapping
+
+    # PERFORMANCE & ACCURACY
+    # Defines when to process a new scan. Set to 0.0 to process every scan.
+    minimum_travel_distance: 0.001  # meters
+    minimum_travel_heading: 0.001  # radians
+
+    # MAP GENERATION
+    # Resolution of the map in meters/pixel. Smaller values mean higher resolution.
+    resolution: 0.01  # meters
+    # The frequency at which the map is updated and published.
+    map_update_interval: 0.2 # seconds
+
+    # SCAN MATCHER (How scans are aligned)
+    # The maximum usable range of the laser. Values further than this are ignored.
+    max_laser_range: 7.0 # meters
+    min_laser_range: 0.2 # meters
+    # How many scans to buffer for matching.
+    scan_buffer_size: 15
+
+    # LOOP CLOSURE (Detecting a place you've been before)
+    # The minimum number of scans in a sequence to be considered for a loop closure.
+    loop_match_minimum_chain_size: 10
+    # How far to search for a loop closure from the current position.
+    loop_search_maximum_distance: 10.0

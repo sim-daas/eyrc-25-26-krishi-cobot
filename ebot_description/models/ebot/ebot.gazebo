@@ -48,7 +48,7 @@
     name="ignition::gazebo::systems::OdometryPublisher">
     <odom_topic>odom</odom_topic>
     <odom_frame>odom</odom_frame>
-    <tf_topic>tf</tf_topic>
+    <!-- <tf_topic>tf</tf_topic> -->
     <robot_base_frame>ebot_base_link</robot_base_frame>
   </plugin>
   </gazebo>
@@ -202,7 +202,7 @@
   <xacro:ultrasonic_sensor name="ultrasonic_rr"/>
 
   <!-- This is the imu sensor -->
-  <!-- <gazebo reference="imu_link">
+  <gazebo reference="imu_link">
     <sensor name="imu_sensor" type="imu">
         <always_on>1</always_on>
         <update_rate>100</update_rate>
@@ -210,6 +210,6 @@
         <topic>imu</topic>
         <pose>0 0 0 0 0 0</pose>
     </sensor>
-  </gazebo> -->
+  </gazebo>
 
 </robot>
