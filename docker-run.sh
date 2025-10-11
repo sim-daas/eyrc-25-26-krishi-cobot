@@ -6,7 +6,7 @@ CONTAINER_NAME="${2:-humble_dev}"
 
 # Use third argument as host repo path, or default to current directory
 HOST_REPO_PATH="${3:-$(pwd)}"
-CONTAINER_REPO_PATH="/root/robows/src/robobase"
+CONTAINER_REPO_PATH="/root/robows/src/eyrc-25-26-krishi-cobot"
 
 # Shift to allow passing extra -v options as further arguments
 shift 3 || true
