@@ -61,6 +61,12 @@ class FruitsTF(Node):
         self.image_stamp = None
         self.team_id = 1505
 
+        self.lower_white = np.array([0, 0, 65], dtype=np.int32)
+        self.upper_white = np.array([180, 80, 150], dtype=np.int32)
+        self.kernel_size = 5
+        self.min_area = 1000
+        self.max_area = 25000
+
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
@@ -121,21 +127,37 @@ class FruitsTF(Node):
 
         hsv_image = cv2.cvtColor(rgb_image, cv2.COLOR_BGR2HSV)
 
-        lower_white = np.array([0, 0, 50])
-        upper_white = np.array([180, 80, 150])
+        mask = cv2.inRange(hsv_image, self.lower_white, self.upper_white)
 
-        mask = cv2.inRange(hsv_image, lower_white, upper_white)
+        k = max(1, int(self.kernel_size))
+        if k % 2 == 0:
+            k += 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+        # mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        min_area = int(self.min_area)
+        max_area = int(self.max_area)
 
         for contour in contours:
             area = cv2.contourArea(contour)
-            if area > 500 and area < 2000:
-                M = cv2.moments(contour)
-                if M["m00"] != 0:
-                    cX = int(M["m10"] / M["m00"])
-                    cY = int(M["m01"] / M["m00"])
-                    fruit_info = {"center": (cX, cY), "contour": contour}
-                    bad_fruits.append(fruit_info)
+            if area < min_area or area > max_area:
+                continue
+
+            x, y, w, h = cv2.boundingRect(contour)
+            bbox_area = w * h
+            extent = float(area) / (bbox_area + 1e-6)
+
+            M = cv2.moments(contour)
+            if M["m00"] == 0:
+                continue
+            cX = int(M["m10"] / M["m00"])
+            cY = int(M["m01"] / M["m00"])
+
+            fruit_info = {"center": (cX, cY), "contour": contour}
+            bad_fruits.append(fruit_info)
         return bad_fruits
 
     def process_image(self):
