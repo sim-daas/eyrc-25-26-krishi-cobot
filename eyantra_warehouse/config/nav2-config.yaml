@@ -6,7 +6,7 @@ amcl:
     alpha3: 0.2
     alpha4: 0.2
     alpha5: 0.2
-    base_frame_id: "base_footprint"
+    base_frame_id: "ebot_base_link"
     beam_skip_distance: 0.5
     beam_skip_error_threshold: 0.9
     beam_skip_threshold: 0.3
@@ -47,7 +47,8 @@ amcl:
 bt_navigator:
   ros__parameters:
     global_frame: map
-    robot_base_frame: base_footprint
+    robot_base_frame: ebot_base_link
+    use_sim_time: True
     odom_topic: /odometry/filtered
     bt_loop_duration: 10
     default_server_timeout: 20
@@ -56,20 +57,12 @@ bt_navigator:
     navigators: ["navigate_to_pose"]
     navigate_to_pose:
       plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
-    # navigate_through_poses:
-    #   plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
-    # default_nav_through_poses_bt_xml: "/opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_through_poses.xml"
-    # default_nav_to_pose_bt_xml: "/opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_to_pose.xml"
-
-    # 'default_nav_through_poses_bt_xml' and 'default_nav_to_pose_bt_xml' are use defaults:
-    # nav2_bt_navigator/navigate_to_pose_w_replanning_and_recovery.xml
-    # nav2_bt_navigator/navigate_through_poses_w_replanning_and_recovery.xml
-    # They can be set here or via a RewrittenYaml remap from a parent launch file to Nav2.
-
-    # plugin_lib_names is used to add custom BT plugins to the executor (vector of strings).
-    # Built-in plugins are added automatically
-    # plugin_lib_names: []
-
+      default_nav_to_pose_bt_xml: "/opt/ros/humble/share/nav2_bt_navigator/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
+    plugin_lib_names:
+      - nav2_compute_path_to_pose_action_bt_node
+      - nav2_follow_path_action_bt_node
+      - nav2_rate_controller_bt_node
+      - nav2_pipeline_sequence_bt_node
     error_code_names:
       - compute_path_error_code
       - follow_path_error_code
@@ -108,6 +101,13 @@ controller_server:
     GoalAlign.scale: 24.0
     PathAlign.scale: 32.0
     Twirling.scale: 0.0
+    # recovery_plugins: ["spin", "backup", "wait"]
+    # spin:
+    #   plugin: "nav2_recoveries/Spin"
+    # backup:
+    #   plugin: "nav2_recoveries/BackUp"
+    # wait:
+    #   plugin: "nav2_recoveries/Wait"
     # Controller plugin
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner"
@@ -144,31 +144,17 @@ planner_server:
     use_sim_time: True
     planner_plugins: ["GridBased"]
     GridBased:
-      plugin: "nav2_navfn_planner::NavfnPlanner"
+      expected_planner_plugin_types: ["nav2_navfn_planner/NavfnPlanner"]
       tolerance: 0.5
       use_astar: false
       allow_unknown: true
-
-recoveries_server:
-  ros__parameters:
-    use_sim_time: True
-    costmap_topic: local_costmap/costmap_raw
-    footprint_topic: local_costmap/published_footprint
-    cycle_frequency: 10.0
-    recovery_plugins: ["spin", "backup", "wait"]
-    spin:
-      plugin: "nav2_recoveries/Spin"
-    backup:
-      plugin: "nav2_recoveries/BackUp"
-    wait:
-      plugin: "nav2_recoveries/Wait"
 
 global_costmap:
   global_costmap:
     ros__parameters:
       use_sim_time: True
       global_frame: map
-      robot_base_frame: base_footprint
+      robot_base_frame: ebot_base_link
       update_frequency: 1.0
       publish_frequency: 1.0
       resolution: 0.05
@@ -198,7 +184,7 @@ local_costmap:
     ros__parameters:
       use_sim_time: True
       global_frame: odom
-      robot_base_frame: base_footprint
+      robot_base_frame: ebot_base_link
       update_frequency: 5.0
       publish_frequency: 2.0
       resolution: 0.05
@@ -233,11 +219,10 @@ local_costmap:
 map_server:
   ros__parameters:
     use_sim_time: True
-    yaml_filename: "/root/robows/src/robobase/mobilerobo/maps/house_map.yaml" # IMPORTANT: Change this to your map file
+    yaml_filename: "/root/robows/src/eyrc-25-26/eyantra_warehouse/maps/map.yaml"
 
 lifecycle_manager:
   ros__parameters:
     use_sim_time: True
     autostart: True
     node_names: ['map_server', 'amcl', 'controller_server', 'planner_server', 'bt_navigator']
-

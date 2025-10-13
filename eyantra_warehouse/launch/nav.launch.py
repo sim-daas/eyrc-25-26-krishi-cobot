@@ -12,15 +12,9 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     # Get the package directory
-    pkg_share = FindPackageShare(package='mobilerobo').find('mobilerobo')
-    robot_discription_directory = get_package_share_directory('robobase_description')
-    controller_config = os.path.join(pkg_share, 'config', 'controllers.yaml')
-    slam_config = os.path.join(pkg_share, 'config', 'slam-config.yaml')
+    pkg_share = FindPackageShare(package='eyantra_warehouse').find('eyantra_warehouse')
+    robot_discription_directory = get_package_share_directory('ebot_description')
     ekf_config_path = os.path.join(pkg_share, 'config', 'ekf.yaml')
-    twist_mux_config = os.path.join(pkg_share, 'config', 'twist_mux.yaml')
-    # Path to the URDF xacro file
-    urdf_file = os.path.join(robot_discription_directory, 'models', 'robo.urdf.xacro')
-    urdf_xacro = os.path.join(robot_discription_directory, 'models', 'robo.urdf.xacro')
 
     # Declare launch arguments
     use_sim_time = DeclareLaunchArgument(

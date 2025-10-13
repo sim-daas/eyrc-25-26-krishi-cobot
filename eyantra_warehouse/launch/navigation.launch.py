@@ -27,7 +27,7 @@ def generate_launch_description():
 
     map_file_arg = DeclareLaunchArgument(
         'map',
-        default_value=os.path.join(mobilerobo_pkg_dir, 'maps', 'house_map.yaml'),
+        default_value=os.path.join(mobilerobo_pkg_dir, 'maps', 'map.yaml'),
         description='Full path to map file to load'
     )
 

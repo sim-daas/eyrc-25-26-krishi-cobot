@@ -36,29 +36,6 @@ def generate_launch_description():
         parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}]
     )
 
-    # # ROS-GZ Bridge
-    # gz_bridge_config = os.path.join(pkg_share, 'config', 'gz-bridge.yaml')
-    # bridge_cmd = Node(
-    #     package='ros_gz_bridge',
-    #     executable='parameter_bridge',
-    #     parameters=[{
-    #         'config_file': gz_bridge_config
-    #     }],
-    #     output='screen'
-    # )
- 
-    # Include robot-spawn.launch.py to spawn the robot in Gazebo
-    # robot_spawn_launch = IncludeLaunchDescription(
-    #     PythonLaunchDescriptionSource(
-    #         os.path.join(pkg_share, 'launch', 'robot-spawn.launch.py')
-    #     ),
-    #     launch_arguments={
-    #         'use_sim_time': LaunchConfiguration('use_sim_time'),
-    #         'x': LaunchConfiguration('x'),
-    #         'y': LaunchConfiguration('y')
-    #     }.items()
-    # )
-
     robot_localization_node = Node(
         package='robot_localization',
         executable='ekf_node',
