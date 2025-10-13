@@ -37,6 +37,7 @@ install(
     launch
     worlds
     models
+    maps
 #    meshes
     config
    plugins

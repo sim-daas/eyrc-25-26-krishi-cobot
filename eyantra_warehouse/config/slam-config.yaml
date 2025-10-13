@@ -6,13 +6,13 @@ slam_toolbox:
     base_frame: ebot_base_link
     scan_topic: /scan
 
-    # map_file_name: "/root/robows/src/robobase/mobilerobo/maps/house_graph"
-    # use_prior_map: true
-    # map_start_pose: [0.0, 0.0, 0.0]
+    map_file_name: "/root/robows/src/eyrc-25-26/eyantra_warehouse/maps/map"
+    use_prior_map: true
+    map_start_pose: [0.0, 0.0, 0.0]
 
 
     # MODE: Can be 'mapping' or 'localization'.
-    mode: mapping
+    mode: localization
 
     # PERFORMANCE & ACCURACY
     # Defines when to process a new scan. Set to 0.0 to process every scan.
