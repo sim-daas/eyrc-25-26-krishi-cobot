@@ -16,14 +16,14 @@ slam_toolbox:
 
     # PERFORMANCE & ACCURACY
     # Defines when to process a new scan. Set to 0.0 to process every scan.
-    minimum_travel_distance: 0.0  # meters
-    minimum_travel_heading: 0.0  # radians
+    minimum_travel_distance: 0.05  # meters
+    minimum_travel_heading: 0.001  # radians
 
     # MAP GENERATION
     # Resolution of the map in meters/pixel. Smaller values mean higher resolution.
-    resolution: 0.01  # meters
+    resolution: 0.02  # meters
     # The frequency at which the map is updated and published.
-    map_update_interval: 0.2 # seconds
+    map_update_interval: 0.1 # seconds
 
     # SCAN MATCHER (How scans are aligned)
     # The maximum usable range of the laser. Values further than this are ignored.
@@ -34,6 +34,6 @@ slam_toolbox:
 
     # LOOP CLOSURE (Detecting a place you've been before)
     # The minimum number of scans in a sequence to be considered for a loop closure.
-    loop_match_minimum_chain_size: 20
+    loop_match_minimum_chain_size: 5
     # How far to search for a loop closure from the current position.
-    loop_search_maximum_distance: 20.0
+    loop_search_maximum_distance: 10.0
