@@ -59,6 +59,7 @@ class NavigationGoalSender(Node):
         self.current_pose_index = 0
         self.retry_count = 0
         self.max_retries = 3
+        self.state_check_timer = None  # Store timer reference
         
         self.get_logger().info('Navigation Goal Sender initialized')
         self.get_logger().info('Waiting for Nav2 to be fully active...')
@@ -75,8 +76,8 @@ class NavigationGoalSender(Node):
         while not state_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Waiting for bt_navigator lifecycle service...')
         
-        # Check state periodically
-        timer = self.create_timer(1.0, lambda: self.check_nav2_state(state_client))
+        # Check state periodically - store the timer reference
+        self.state_check_timer = self.create_timer(1.0, lambda: self.check_nav2_state(state_client))
     
     def check_nav2_state(self, state_client):
         """Check if bt_navigator is active"""
@@ -91,9 +92,10 @@ class NavigationGoalSender(Node):
             # State 3 = ACTIVE in lifecycle
             if response.current_state.id == 3:
                 self.get_logger().info('Nav2 is fully active! Waiting for action server...')
-                # Cancel the timer and proceed
-                for timer in self.get_timers():
-                    timer.cancel()
+                # Cancel the timer
+                if self.state_check_timer is not None:
+                    self.state_check_timer.cancel()
+                    self.state_check_timer = None
                 
                 # Now wait for action server
                 self._action_client.wait_for_server()
