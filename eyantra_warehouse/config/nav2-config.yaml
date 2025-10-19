@@ -100,13 +100,13 @@ controller_server:
     linear_granularity: 0.05
     angular_granularity: 0.025
     transform_tolerance: 0.2
-    xy_goal_tolerance: 0.3         # ±0.3m as per requirement
-    yaw_goal_tolerance: 0.174533   # ±10 degrees = 0.174533 radians
+    xy_goal_tolerance: 0.25         # ±0.25m
+    yaw_goal_tolerance: 0.15        # ±0.15 radians (~8.6 degrees)
     goal_checker_plugins: ["simple_goal_checker"]
     simple_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.3
-      yaw_goal_tolerance: 0.174533
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.15
       stateful: true
     critics: ["GoalDist", "PathDist", "ObstacleFootprint", "BaseObstacle", "GoalAlign", "PathAlign", "Twirling"]
     GoalDist.scale: 24.0
@@ -141,8 +141,8 @@ controller_server:
       decel_lim_x: -2.0
       decel_lim_y: 0.0
       decel_lim_theta: -2.5
-      yaw_goal_tolerance: 0.174533   # ±10 degrees
-      xy_goal_tolerance: 0.3         # ±0.3m
+      yaw_goal_tolerance: 0.15       # ±0.15 radians
+      xy_goal_tolerance: 0.25        # ±0.25m
       transform_tolerance: 0.2
       critics: ["GoalDist", "PathDist", "ObstacleFootprint", "BaseObstacle", "GoalAlign", "PathAlign", "Twirling"]
       GoalDist.scale: 24.0
