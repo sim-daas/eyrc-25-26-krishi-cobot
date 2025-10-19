@@ -31,53 +31,98 @@ class ArmControlNode(Node):
             10
         )
         
-        # Waypoints (position [x,y,z], quaternion [x,y,z,w])
-        self.waypoints = [
+        # SAFE TRANSIT JOINT CONFIGURATION (from joint_state_publisher_gui)
+        # This is a known-safe configuration above obstacles
+        self.safe_transit_joints = np.array([
+            -3.973,  # shoulder_pan_joint
+            -1.596,  # shoulder_lift_joint
+             0.0,    # elbow_joint
+             0.0,    # wrist_1_joint
+             0.0,    # wrist_2_joint
+             0.0     # wrist_3_joint
+        ])
+        
+        # Target waypoints - Cartesian poses (position [x,y,z], quaternion [x,y,z,w])
+        self.target_waypoints = [
             (np.array([-0.214, -0.532, 0.557]), np.array([0.707, 0.028, 0.034, 0.707])),  # P1
             (np.array([-0.159, 0.501, 0.415]), np.array([0.029, 0.997, 0.045, 0.033])),   # P2
             (np.array([-0.806, 0.010, 0.182]), np.array([-0.684, 0.726, 0.05, 0.008]))    # P3
         ]
         
+        # Build full waypoint sequence
+        self.waypoints = self.build_waypoint_sequence()
+        
         # State variables
         self.joint_positions = None
         self.current_waypoint_idx = 0
-        self.control_phase = "PRE_POSITION"
+        self.control_mode = "JOINT_CONTROL"  # JOINT_CONTROL or CARTESIAN_SERVO
         
         # Tolerances
         self.position_tolerance = 0.15
-        self.orientation_tolerance = 0.15  # radians (~8.6 degrees)
+        self.orientation_tolerance = 0.15
+        self.joint_tolerance = 0.05  # radians for joint space (~2.86 degrees)
         
-        # Velocity limits (more aggressive for orientation)
+        # Velocity limits
+        self.max_joint_velocity = 0.5  # rad/s for joint control
         self.max_linear_velocity_coarse = 0.3
-        self.max_angular_velocity_coarse = 0.8  # Increased
+        self.max_angular_velocity_coarse = 0.8
         self.max_linear_velocity_fine = 0.12
-        self.max_angular_velocity_fine = 0.4    # Increased
+        self.max_angular_velocity_fine = 0.4
         
-        # Distance thresholds
+        # Distance thresholds for Cartesian control
         self.far_distance = 0.4
         self.medium_distance = 0.2
         self.close_distance = 0.12
         
-        # Control gains (increased orientation gain significantly)
+        # Control gains
+        self.joint_gain = 2.0  # P gain for joint control
         self.position_gain_base = 2.0
-        self.orientation_gain_base = 3.0  # DOUBLED for stronger orientation control
+        self.orientation_gain_base = 3.0
         
-        self.timeout = 40.0  # Increased timeout
+        self.timeout = 40.0
         self.waypoint_start_time = None
-        self.phase_start_time = None
         self.tf_ready = False
-        self.last_control_mode = ""
+        self.last_log_time = 0
         
-        # Pre-positioning parameters
-        self.pre_position_duration = 2.0
-        self.pre_positioned = False
+        # Cartesian servo phase (only used during CARTESIAN_SERVO mode)
+        self.servo_phase = "COARSE_APPROACH"
         
         # Control timer (100 Hz)
         self.control_timer = self.create_timer(0.01, self.control_loop)
         
-        self.get_logger().info('Arm Control Node initialized (Enhanced Orientation Control)')
-        self.get_logger().info('Waiting for TF and joint states...')
+        self.get_logger().info('Arm Control Node initialized (Hybrid: Joint + Cartesian Control)')
+        self.get_logger().info(f'Total waypoints: {len(self.waypoints)}')
+        self.get_logger().info(f'Safe transit joints: {self.safe_transit_joints}')
+        self.get_logger().info('Waiting for joint states...')
+    
+    def build_waypoint_sequence(self):
+        """
+        Build waypoint sequence alternating between joint-space transits and Cartesian targets.
+        Sequence: Transit(joint) → P1(cart) → Transit(joint) → P2(cart) → Transit(joint) → P3(cart)
+        """
+        sequence = []
         
+        for i, target_pose in enumerate(self.target_waypoints):
+            # Add joint-space transit point
+            sequence.append({
+                'type': 'joint',
+                'target_joints': self.safe_transit_joints.copy(),
+                'target_pose': None,
+                'description': f'Transit (joint) before P{i+1}',
+                'is_target': False
+            })
+            
+            # Add Cartesian target waypoint
+            sequence.append({
+                'type': 'cartesian',
+                'target_joints': None,
+                'target_pose': target_pose,
+                'description': f'Target P{i+1} (Cartesian)',
+                'is_target': True
+            })
+        
+        return sequence
+    
     def joint_callback(self, msg):
         """Update current joint positions"""
         self.joint_positions = np.array(msg.position[:6])
@@ -111,125 +156,89 @@ class ArmControlNode(Node):
             return position, quaternion
             
         except Exception as e:
-            if self.tf_ready:
-                self.get_logger().warn(f'Failed to get transform: {str(e)}')
             return None, None
+    
+    # ========== JOINT SPACE CONTROL ==========
+    
+    def compute_joint_velocities(self, target_joints):
+        """Compute joint velocities using proportional control"""
+        if self.joint_positions is None:
+            return np.zeros(6)
         
+        # Compute joint errors
+        joint_errors = target_joints - self.joint_positions
+        
+        # Proportional control
+        joint_velocities = joint_errors * self.joint_gain
+        
+        # Limit velocities
+        for i in range(6):
+            joint_velocities[i] = np.clip(
+                joint_velocities[i], 
+                -self.max_joint_velocity, 
+                self.max_joint_velocity
+            )
+        
+        return joint_velocities
+    
+    def check_joint_waypoint_reached(self, target_joints):
+        """Check if joint-space waypoint is reached"""
+        if self.joint_positions is None:
+            return False
+        
+        joint_errors = np.abs(target_joints - self.joint_positions)
+        max_error = np.max(joint_errors)
+        
+        return max_error < self.joint_tolerance
+    
+    # ========== CARTESIAN SPACE CONTROL ==========
+    
     def compute_position_error(self, current_pos, target_pos):
         """Compute position error"""
         return np.linalg.norm(target_pos - current_pos)
         
     def compute_orientation_error(self, current_quat, target_quat):
-        """
-        Compute orientation error using scipy Rotation (more robust).
-        Handles quaternion double-coverage properly.
-        """
-        # Normalize quaternions
+        """Compute orientation error using scipy Rotation"""
         current_quat = current_quat / np.linalg.norm(current_quat)
         target_quat = target_quat / np.linalg.norm(target_quat)
         
-        # Use scipy for robust rotation difference
         r_current = Rotation.from_quat(current_quat)
         r_target = Rotation.from_quat(target_quat)
-        
-        # Compute relative rotation
         r_diff = r_target * r_current.inv()
         
-        # Get rotation angle (always positive, 0 to pi)
-        angle = r_diff.magnitude()
-        
-        return angle
+        return r_diff.magnitude()
     
     def compute_angular_velocity_from_quaternion_error(self, current_quat, target_quat):
-        """
-        Compute angular velocity using scipy Rotation for robustness.
-        Returns angular velocity vector in base_link frame.
-        """
-        # Normalize
+        """Compute angular velocity using scipy Rotation"""
         current_quat = current_quat / np.linalg.norm(current_quat)
         target_quat = target_quat / np.linalg.norm(target_quat)
         
-        # Create Rotation objects
         r_current = Rotation.from_quat(current_quat)
         r_target = Rotation.from_quat(target_quat)
-        
-        # Compute relative rotation (what rotation gets us from current to target)
         r_error = r_target * r_current.inv()
         
-        # Convert to rotation vector (axis * angle)
-        rotvec = r_error.as_rotvec()
-        
-        # This is our angular velocity direction and magnitude
-        return rotvec
-        
-    def quaternion_multiply(self, q1, q2):
-        """Multiply two quaternions [x, y, z, w]"""
-        x1, y1, z1, w1 = q1
-        x2, y2, z2, w2 = q2
-        return np.array([
-            w1*x2 + x1*w2 + y1*z2 - z1*y2,
-            w1*y2 - x1*z2 + y1*w2 + z1*x2,
-            w1*z2 + x1*y2 - y1*x2 + z1*w2,
-            w1*w2 - x1*x2 - y1*y2 - z1*z2
-        ])
-        
-    def quaternion_inverse(self, q):
-        """Compute quaternion inverse [x, y, z, w]"""
-        return np.array([-q[0], -q[1], -q[2], q[3]])
+        return r_error.as_rotvec()
     
-    def pre_position_base_joint(self, target_pos):
-        """Rotate base joint (shoulder_pan) to face target"""
-        target_angle = np.arctan2(target_pos[1], target_pos[0])
-        current_angle = self.joint_positions[0] if self.joint_positions is not None else 0.0
-        
-        angle_diff = target_angle - current_angle
-        
-        # Normalize to [-pi, pi]
-        while angle_diff > np.pi:
-            angle_diff -= 2 * np.pi
-        while angle_diff < -np.pi:
-            angle_diff += 2 * np.pi
-        
-        # Proportional control
-        joint_vel = np.zeros(6)
-        joint_vel[0] = np.clip(angle_diff * 1.5, -1.0, 1.0)
-        
-        msg = Float64MultiArray()
-        msg.data = joint_vel.tolist()
-        self.joint_pub.publish(msg)
-        
-        return abs(angle_diff) < 0.1
-    
-    def compute_blending_weights(self, distance_to_target, orientation_error, control_phase):
-        """
-        Compute position and orientation weights.
-        NOW: Give more weight to orientation throughout the motion.
-        """
-        
-        if control_phase == "COARSE_APPROACH":
+    def compute_blending_weights(self, distance_to_target, orientation_error):
+        """Compute position and orientation weights based on distance"""
+        if self.servo_phase == "COARSE_APPROACH":
             if distance_to_target > self.far_distance:
-                # Far: Still focus on position, but keep orientation active
-                return 0.80, 0.20  # Reduced position dominance
+                return 0.80, 0.20
             elif distance_to_target > self.medium_distance:
                 return 0.65, 0.35
             else:
-                # Getting closer: balance more
                 return 0.55, 0.45
-        
-        else:  # FINE_TUNE phase
-            # In fine tune, orientation becomes more important
-            if orientation_error > 0.3:  # Large orientation error
-                return 0.30, 0.70  # Heavily prioritize orientation
+        else:  # FINE_TUNE
+            if orientation_error > 0.3:
+                return 0.30, 0.70
             elif distance_to_target > self.close_distance:
-                return 0.45, 0.55  # Slightly favor orientation
+                return 0.45, 0.55
             else:
-                # Very close: orientation is critical
-                return 0.25, 0.75  # Heavily prioritize orientation
+                return 0.25, 0.75
         
-    def compute_velocity_scaling(self, distance_to_target, orientation_error, control_phase):
-        """Compute velocity scaling - don't slow down too much for orientation errors"""
-        
-        if control_phase == "COARSE_APPROACH":
+    def compute_velocity_scaling(self, distance_to_target, orientation_error):
+        """Compute velocity scaling for smooth motion"""
+        if self.servo_phase == "COARSE_APPROACH":
             if distance_to_target < self.medium_distance:
                 distance_scale = 0.6 + 0.4 * (distance_to_target / self.medium_distance)
             else:
@@ -240,9 +249,8 @@ class ArmControlNode(Node):
             else:
                 distance_scale = 0.8
         
-        # Don't slow down as much for orientation errors
-        if orientation_error > 1.0:  # Very large error (>57 degrees)
-            orientation_scale = 0.8  # Keep moving
+        if orientation_error > 1.0:
+            orientation_scale = 0.8
         elif orientation_error > 0.5:
             orientation_scale = 0.9
         else:
@@ -251,45 +259,31 @@ class ArmControlNode(Node):
         return min(distance_scale, orientation_scale, 1.0)
         
     def compute_twist_command(self, current_pos, current_quat, target_pos, target_quat):
-        """Compute velocity command with IMPROVED orientation control"""
-        
-        # Compute errors
+        """Compute Cartesian velocity command"""
         pos_error_vector = target_pos - current_pos
         distance_to_target = np.linalg.norm(pos_error_vector)
         orientation_error = self.compute_orientation_error(current_quat, target_quat)
         
-        # Get blending weights (now considers orientation error too)
+        # Get blending weights
         pos_weight, ori_weight = self.compute_blending_weights(
-            distance_to_target, orientation_error, self.control_phase
+            distance_to_target, orientation_error
         )
         
-        # Log control mode change
-        control_mode = f"{self.control_phase} - pos:{pos_weight:.2f}/ori:{ori_weight:.2f}"
-        if control_mode != self.last_control_mode:
-            self.get_logger().info(
-                f'Control mode: {control_mode} '
-                f'(dist: {distance_to_target:.3f}m, ori_err: {np.degrees(orientation_error):.1f}°)'
-            )
-            self.last_control_mode = control_mode
-        
-        # Position control (proportional)
+        # Position control
         linear_vel = pos_error_vector * self.position_gain_base * pos_weight
         
-        # Orientation control (using scipy rotation vector - MUCH MORE ROBUST)
+        # Orientation control
         angular_vel = self.compute_angular_velocity_from_quaternion_error(
             current_quat, target_quat
         ) * self.orientation_gain_base * ori_weight
         
         # Apply velocity scaling
-        velocity_scale = self.compute_velocity_scaling(
-            distance_to_target, orientation_error, self.control_phase
-        )
-        
+        velocity_scale = self.compute_velocity_scaling(distance_to_target, orientation_error)
         linear_vel *= velocity_scale
         angular_vel *= velocity_scale
         
-        # Apply velocity limits based on phase
-        if self.control_phase == "COARSE_APPROACH":
+        # Apply velocity limits
+        if self.servo_phase == "COARSE_APPROACH":
             max_linear = self.max_linear_velocity_coarse
             max_angular = self.max_angular_velocity_coarse
         else:
@@ -304,23 +298,25 @@ class ArmControlNode(Node):
         if angular_speed > max_angular:
             angular_vel = angular_vel * (max_angular / angular_speed)
         
-        return linear_vel, angular_vel
+        return linear_vel, angular_vel, distance_to_target, orientation_error
         
-    def check_waypoint_reached(self, current_pos, current_quat, target_pos, target_quat):
-        """Check if BOTH position AND orientation are within tolerance"""
+    def check_cartesian_waypoint_reached(self, current_pos, current_quat, target_pos, target_quat):
+        """Check if Cartesian waypoint is reached"""
         pos_error = self.compute_position_error(current_pos, target_pos)
         ori_error = self.compute_orientation_error(current_quat, target_quat)
         
         position_ok = pos_error < self.position_tolerance
         orientation_ok = ori_error < self.orientation_tolerance
         
-        return position_ok and orientation_ok
-        
+        return position_ok and orientation_ok, pos_error, ori_error
+    
+    # ========== MAIN CONTROL LOOP ==========
+    
     def control_loop(self):
-        """Main control loop with phases"""
+        """Main control loop - hybrid joint/Cartesian control"""
         if self.joint_positions is None:
             return
-            
+        
         # Check if all waypoints completed
         if self.current_waypoint_idx >= len(self.waypoints):
             self.get_logger().info('✓ All waypoints reached! Shutting down...')
@@ -329,127 +325,148 @@ class ArmControlNode(Node):
             rclpy.shutdown()
             return
         
-        current_pos, current_quat = self.get_current_pose()
-        if current_pos is None:
-            return
-        
-        target_pos, target_quat = self.waypoints[self.current_waypoint_idx]
+        # Get current waypoint
+        waypoint = self.waypoints[self.current_waypoint_idx]
         
         # Initialize timer for this waypoint
         if self.waypoint_start_time is None:
             self.waypoint_start_time = time.time()
-            self.phase_start_time = time.time()
-            self.control_phase = "PRE_POSITION"
-            self.pre_positioned = False
+            self.last_log_time = time.time()
             
-            # Log initial orientation error for debugging
-            initial_ori_error = self.compute_orientation_error(current_quat, target_quat)
+            if waypoint['type'] == 'joint':
+                self.control_mode = "JOINT_CONTROL"
+            else:
+                self.control_mode = "CARTESIAN_SERVO"
+                self.servo_phase = "COARSE_APPROACH"
+            
             self.get_logger().info(
                 f'\n{"="*60}\n'
-                f'→ Moving to Waypoint {self.current_waypoint_idx + 1}/3\n'
-                f'  Target Position: [{target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f}]\n'
-                f'  Target Orientation: [{target_quat[0]:.3f}, {target_quat[1]:.3f}, {target_quat[2]:.3f}, {target_quat[3]:.3f}]\n'
-                f'  Initial Orientation Error: {np.degrees(initial_ori_error):.2f}°\n'
-                f'  Phase: PRE_POSITION (rotating base joint)\n'
+                f'→ Waypoint {self.current_waypoint_idx + 1}/{len(self.waypoints)}: {waypoint["description"]}\n'
+                f'  Control Mode: {self.control_mode}\n'
                 f'{"="*60}'
             )
         
+        # Check timeout
         elapsed_time = time.time() - self.waypoint_start_time
         if elapsed_time > self.timeout:
-            pos_error = self.compute_position_error(current_pos, target_pos)
-            ori_error = self.compute_orientation_error(current_quat, target_quat)
             self.get_logger().warn(
-                f'⚠ Timeout ({self.timeout}s) reached for waypoint {self.current_waypoint_idx + 1}.\n'
-                f'  Final errors - Pos: {pos_error:.4f}m, Ori: {ori_error:.4f}rad ({np.degrees(ori_error):.2f}°)\n'
-                f'  Moving to next waypoint...'
+                f'⚠ Timeout ({self.timeout}s) for {waypoint["description"]}. Moving to next...'
             )
             self.move_to_next_waypoint()
             return
         
-        # Phase 1: PRE_POSITION
-        if self.control_phase == "PRE_POSITION":
-            phase_elapsed = time.time() - self.phase_start_time
-            is_aligned = self.pre_position_base_joint(target_pos)
+        # ========== JOINT SPACE CONTROL ==========
+        if self.control_mode == "JOINT_CONTROL":
+            target_joints = waypoint['target_joints']
             
-            if is_aligned or phase_elapsed > self.pre_position_duration:
-                self.control_phase = "COARSE_APPROACH"
-                self.phase_start_time = time.time()
-                self.get_logger().info('✓ Pre-positioning complete. Switching to COARSE_APPROACH')
-            return
-        
-        # Compute current errors
-        pos_error = self.compute_position_error(current_pos, target_pos)
-        ori_error = self.compute_orientation_error(current_quat, target_quat)
-        distance_to_target = pos_error
-        
-        # Phase 2: COARSE_APPROACH
-        if self.control_phase == "COARSE_APPROACH":
-            if distance_to_target < self.close_distance:
-                self.control_phase = "FINE_TUNE"
-                self.phase_start_time = time.time()
+            # Compute and publish joint velocities
+            joint_velocities = self.compute_joint_velocities(target_joints)
+            
+            msg = Float64MultiArray()
+            msg.data = joint_velocities.tolist()
+            self.joint_pub.publish(msg)
+            
+            # Check if reached
+            if self.check_joint_waypoint_reached(target_joints):
+                joint_errors = np.abs(target_joints - self.joint_positions)
                 self.get_logger().info(
-                    f'✓ Close to target ({distance_to_target:.3f}m, ori_err: {np.degrees(ori_error):.1f}°). '
-                    f'Switching to FINE_TUNE'
+                    f'\n{"="*60}\n'
+                    f'✓ {waypoint["description"]} REACHED!\n'
+                    f'  Max joint error: {np.max(joint_errors):.4f} rad ({np.degrees(np.max(joint_errors)):.2f}°)\n'
+                    f'  Time taken: {elapsed_time:.2f}s\n'
+                    f'{"="*60}'
                 )
+                
+                self.stop_robot()
+                time.sleep(0.2)  # Short pause for stability
+                self.move_to_next_waypoint()
+                return
+            
+            # Log progress every 2 seconds
+            if time.time() - self.last_log_time > 2.0:
+                joint_errors = np.abs(target_joints - self.joint_positions)
+                self.get_logger().info(
+                    f'[{elapsed_time:.1f}s] JOINT_CONTROL - Max error: {np.max(joint_errors):.4f} rad'
+                )
+                self.last_log_time = time.time()
         
-        # Check if waypoint reached
-        if self.check_waypoint_reached(current_pos, current_quat, target_pos, target_quat):
-            self.get_logger().info(
-                f'\n{"="*60}\n'
-                f'✓ Waypoint {self.current_waypoint_idx + 1}/3 REACHED!\n'
-                f'  Position error: {pos_error:.4f}m (tolerance: {self.position_tolerance}m) ✓\n'
-                f'  Orientation error: {ori_error:.4f}rad = {np.degrees(ori_error):.2f}° '
-                f'(tolerance: {self.orientation_tolerance}rad = {np.degrees(self.orientation_tolerance):.2f}°) ✓\n'
-                f'  Time taken: {elapsed_time:.2f}s\n'
-                f'  Final phase: {self.control_phase}\n'
-                f'{"="*60}'
+        # ========== CARTESIAN SPACE CONTROL ==========
+        elif self.control_mode == "CARTESIAN_SERVO":
+            # Get current pose
+            current_pos, current_quat = self.get_current_pose()
+            if current_pos is None:
+                return
+            
+            target_pos, target_quat = waypoint['target_pose']
+            
+            # Phase transition: COARSE → FINE
+            pos_error = self.compute_position_error(current_pos, target_pos)
+            if self.servo_phase == "COARSE_APPROACH" and pos_error < self.close_distance:
+                self.servo_phase = "FINE_TUNE"
+                self.get_logger().info('✓ Switching to FINE_TUNE phase')
+            
+            # Compute and publish twist command
+            linear_vel, angular_vel, dist, ori_err = self.compute_twist_command(
+                current_pos, current_quat, target_pos, target_quat
             )
             
-            self.stop_robot()
-            self.get_logger().info('Pausing for 1 second...')
-            time.sleep(1.0)
-            self.move_to_next_waypoint()
-            return
-        
-        # Compute and publish velocity command
-        linear_vel, angular_vel = self.compute_twist_command(
-            current_pos, current_quat, target_pos, target_quat
-        )
-        
-        twist_msg = Twist()
-        twist_msg.linear.x = float(linear_vel[0])
-        twist_msg.linear.y = float(linear_vel[1])
-        twist_msg.linear.z = float(linear_vel[2])
-        twist_msg.angular.x = float(angular_vel[0])
-        twist_msg.angular.y = float(angular_vel[1])
-        twist_msg.angular.z = float(angular_vel[2])
-        
-        self.twist_pub.publish(twist_msg)
-        
-        # Log progress every 2 seconds
-        if int(elapsed_time * 10) % 20 == 0:
-            self.get_logger().info(
-                f'WP{self.current_waypoint_idx + 1} [{elapsed_time:.1f}s] {self.control_phase} - '
-                f'Pos: {pos_error:.4f}m {"✓" if pos_error < self.position_tolerance else "✗"}, '
-                f'Ori: {ori_error:.4f}rad ({np.degrees(ori_error):.1f}°) {"✓" if ori_error < self.orientation_tolerance else "✗"}'
+            twist_msg = Twist()
+            twist_msg.linear.x = float(linear_vel[0])
+            twist_msg.linear.y = float(linear_vel[1])
+            twist_msg.linear.z = float(linear_vel[2])
+            twist_msg.angular.x = float(angular_vel[0])
+            twist_msg.angular.y = float(angular_vel[1])
+            twist_msg.angular.z = float(angular_vel[2])
+            
+            self.twist_pub.publish(twist_msg)
+            
+            # Check if reached
+            reached, pos_err, ori_err = self.check_cartesian_waypoint_reached(
+                current_pos, current_quat, target_pos, target_quat
             )
+            
+            if reached:
+                self.get_logger().info(
+                    f'\n{"="*60}\n'
+                    f'✓ {waypoint["description"]} REACHED!\n'
+                    f'  Position error: {pos_err:.4f}m ✓\n'
+                    f'  Orientation error: {ori_err:.4f}rad = {np.degrees(ori_err):.2f}° ✓\n'
+                    f'  Time taken: {elapsed_time:.2f}s\n'
+                    f'{"="*60}'
+                )
+                
+                self.stop_robot()
+                
+                # Pause only at actual targets
+                if waypoint['is_target']:
+                    self.get_logger().info('Target reached! Pausing for 1 second...')
+                    time.sleep(1.0)
+                
+                self.move_to_next_waypoint()
+                return
+            
+            # Log progress every 2 seconds
+            if time.time() - self.last_log_time > 2.0:
+                self.get_logger().info(
+                    f'[{elapsed_time:.1f}s] {self.servo_phase} - '
+                    f'Pos: {pos_err:.4f}m, Ori: {np.degrees(ori_err):.1f}°'
+                )
+                self.last_log_time = time.time()
     
     def move_to_next_waypoint(self):
-        """Move to the next waypoint"""
+        """Move to next waypoint"""
         self.current_waypoint_idx += 1
         self.waypoint_start_time = None
-        self.phase_start_time = None
-        self.control_phase = "PRE_POSITION"
-        self.pre_positioned = False
-        self.last_control_mode = ""
         
     def stop_robot(self):
-        """Stop the robot by publishing zero velocity"""
+        """Stop both joint and Cartesian control"""
+        # Stop Cartesian servo
         twist_msg = Twist()
         for _ in range(10):
             self.twist_pub.publish(twist_msg)
             time.sleep(0.01)
         
+        # Stop joint control
         joint_msg = Float64MultiArray()
         joint_msg.data = [0.0] * 6
         for _ in range(10):
