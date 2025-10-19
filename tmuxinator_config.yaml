@@ -1,0 +1,45 @@
+name: ur5_waypoint_task
+root: ~/robows
+
+# Start windows in manual mode (don't auto-run)
+on_project_start: |
+  cd ~/robows
+  source install/setup.bash
+
+windows:
+  - world:
+      layout: tiled
+      panes:
+        - world_launch:
+            - sleep 2
+            - echo "Launching Gazebo world..."
+            - ros2 launch eyantra_warehouse task1.launch.py
+  
+  - arm:
+      layout: tiled
+      panes:
+        - spawn_arm:
+            - sleep 8
+            - echo "Spawning UR5 arm..."
+            - ros2 launch ur_simulation_gz spawn_arm.launch.py
+  
+  - control:
+      layout: tiled
+      panes:
+        - arm_control:
+            - sleep 25
+            - echo "Starting arm control node..."
+            - cd ~/robows/src/eyrc-25-26/ur5_control/src
+            - python3 arm_control.py
+  
+  - monitor:
+      layout: tiled
+      panes:
+        - joint_states:
+            - sleep 10
+            - echo "Monitoring joint states..."
+            - ros2 topic echo /joint_states --once
+        - tcp_pose:
+            - sleep 10
+            - echo "Monitoring TCP pose..."
+            - ros2 topic echo /tcp_pose_raw
