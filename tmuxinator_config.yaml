@@ -1,45 +1,38 @@
 name: ur5_waypoint_task
 root: ~/robows
 
-# Start windows in manual mode (don't auto-run)
+# Source ROS2 workspace on startup
 on_project_start: |
   cd ~/robows
   source install/setup.bash
 
 windows:
-  - world:
-      layout: tiled
+  - main:
+      layout: main-vertical
       panes:
-        - world_launch:
+        # Left side - World + Arm (vertical split)
+        - world:
             - sleep 2
-            - echo "Launching Gazebo world..."
+            - echo "=== Launching Gazebo World ==="
             - ros2 launch eyantra_warehouse task1.launch.py
-  
-  - arm:
-      layout: tiled
-      panes:
-        - spawn_arm:
+        
+        - arm:
             - sleep 8
-            - echo "Spawning UR5 arm..."
+            - echo "=== Spawning UR5 Arm ==="
             - ros2 launch ur_simulation_gz spawn_arm.launch.py
-  
-  - control:
-      layout: tiled
-      panes:
-        - arm_control:
+        
+        # Right side - Control + Monitor (vertical split)
+        - control:
             - sleep 25
-            - echo "Starting arm control node..."
+            - echo "=== Starting Arm Control Node ==="
             - cd ~/robows/src/eyrc-25-26/ur5_control/src
             - python3 arm_control.py
-  
-  - monitor:
-      layout: tiled
-      panes:
-        - joint_states:
-            - sleep 10
-            - echo "Monitoring joint states..."
-            - ros2 topic echo /joint_states --once
-        - tcp_pose:
-            - sleep 10
-            - echo "Monitoring TCP pose..."
-            - ros2 topic echo /tcp_pose_raw
+        
+        - monitor:
+            - sleep 15
+            - echo "=== Monitor & Debug Window ==="t"
+            - echo "Useful commands:"          - echo "  ros2 topic echo /joint_states"
+            - echo "  ros2 topic list"- echo "  ros2 topic echo /delta_twist_cmds"
+            - echo "  ros2 topic echo /joint_states --once""  ros2 node list"
+            - echo "  ros2 node list"- echo ""
+            - echo "  ros2 topic hz /delta_twist_cmds"ss Enter to start monitoring..."

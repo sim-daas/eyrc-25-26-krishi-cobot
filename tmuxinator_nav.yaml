@@ -1,0 +1,37 @@
+name: ebot_navigation_task
+root: ~/robows
+
+on_project_start: |
+  cd ~/robows
+  source install/setup.bash
+
+windows:
+  - main:
+      layout: main-vertical
+      panes:
+        # Left side - World + Robot (vertical split)
+        - world:
+            - sleep 2
+            - echo "=== Launching Gazebo World ==="
+            - ros2 launch eyantra_warehouse task1.launch.py
+
+        - robot:
+            - sleep 8
+            - echo "=== Spawning eBot ==="
+            - ros2 launch ebot_description spawn_ebot.launch.py
+
+        # Right side - Navigation + Monitor (vertical split)
+        - navigation:
+            - sleep 15
+            - echo "=== Starting Navigation System ==="
+            - ros2 launch eyantra_warehouse ebot_nav.launch.py
+
+        - monitor:
+            - sleep 20
+            - echo "=== Monitor & Debug Window ==="
+            - echo "Useful commands:"
+            - echo "  ros2 topic echo /goal_pose"
+            - echo "  ros2 topic list"
+            - echo "  ros2 node list"
+            - echo "  ros2 topic hz /scan"
+            - echo "Press Enter to start monitoring..."

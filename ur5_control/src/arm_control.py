@@ -31,8 +31,7 @@ class ArmControlNode(Node):
             10
         )
         
-        # SAFE TRANSIT JOINT CONFIGURATION (from joint_state_publisher_gui)
-        # This is a known-safe configuration above obstacles
+        # SAFE TRANSIT JOINT CONFIGURATION
         self.safe_transit_joints = np.array([
             -3.973,  # shoulder_pan_joint
             -1.596,  # shoulder_lift_joint
@@ -42,7 +41,7 @@ class ArmControlNode(Node):
              0.0     # wrist_3_joint
         ])
         
-        # Target waypoints - Cartesian poses (position [x,y,z], quaternion [x,y,z,w])
+        # Target waypoints - Cartesian poses
         self.target_waypoints = [
             (np.array([-0.214, -0.532, 0.557]), np.array([0.707, 0.028, 0.034, 0.707])),  # P1
             (np.array([-0.159, 0.501, 0.415]), np.array([0.029, 0.997, 0.045, 0.033])),   # P2
@@ -55,19 +54,19 @@ class ArmControlNode(Node):
         # State variables
         self.joint_positions = None
         self.current_waypoint_idx = 0
-        self.control_mode = "JOINT_CONTROL"  # JOINT_CONTROL or CARTESIAN_SERVO
+        self.control_mode = "JOINT_CONTROL"
         
-        # Tolerances
+        # Tolerances - LOOSENED FOR TRANSITS
         self.position_tolerance = 0.15
         self.orientation_tolerance = 0.15
-        self.joint_tolerance = 0.05  # radians for joint space (~2.86 degrees)
+        self.joint_tolerance = 1.0  # INCREASED: ~8.6° (was 2.86°) - faster transit
         
-        # Velocity limits
-        self.max_joint_velocity = 0.5  # rad/s for joint control
-        self.max_linear_velocity_coarse = 0.3
-        self.max_angular_velocity_coarse = 0.8
-        self.max_linear_velocity_fine = 0.12
-        self.max_angular_velocity_fine = 0.4
+        # Velocity limits - INCREASED FOR TRANSITS
+        self.max_joint_velocity = 1.5  # INCREASED: rad/s for faster transit
+        self.max_linear_velocity_coarse = 0.5
+        self.max_angular_velocity_coarse = 1.0
+        self.max_linear_velocity_fine = 0.19
+        self.max_angular_velocity_fine = 0.7
         
         # Distance thresholds for Cartesian control
         self.far_distance = 0.4
@@ -75,51 +74,73 @@ class ArmControlNode(Node):
         self.close_distance = 0.12
         
         # Control gains
-        self.joint_gain = 2.0  # P gain for joint control
-        self.position_gain_base = 2.0
-        self.orientation_gain_base = 3.0
+        self.joint_gain = 4  # INCREASED: P gain for faster joint control
+        self.position_gain_base = 2.5
+        self.orientation_gain_base = 3.5
         
         self.timeout = 40.0
         self.waypoint_start_time = None
         self.tf_ready = False
         self.last_log_time = 0
         
-        # Cartesian servo phase (only used during CARTESIAN_SERVO mode)
+        # Cartesian servo phase
         self.servo_phase = "COARSE_APPROACH"
         
         # Control timer (100 Hz)
         self.control_timer = self.create_timer(0.01, self.control_loop)
         
-        self.get_logger().info('Arm Control Node initialized (Hybrid: Joint + Cartesian Control)')
+        self.get_logger().info('Arm Control Node initialized (Fast Transit + Precise Target)')
         self.get_logger().info(f'Total waypoints: {len(self.waypoints)}')
-        self.get_logger().info(f'Safe transit joints: {self.safe_transit_joints}')
+        self.get_logger().info('Sequence: P1 → Transit → P2 → P3 (optimized path)')
+        self.get_logger().info(f'Transit tolerance: {np.degrees(self.joint_tolerance):.1f}° (loose)')
+        self.get_logger().info(f'Target tolerance: {self.position_tolerance}m, {np.degrees(self.orientation_tolerance):.1f}°')
         self.get_logger().info('Waiting for joint states...')
     
     def build_waypoint_sequence(self):
         """
-        Build waypoint sequence alternating between joint-space transits and Cartesian targets.
-        Sequence: Transit(joint) → P1(cart) → Transit(joint) → P2(cart) → Transit(joint) → P3(cart)
+        Build optimized waypoint sequence.
+        Sequence: P1 → Transit (only between P1 and P2) → P2 → P3
+        
+        Transit only needed between P1 and P2 to avoid obstacles.
+        P2 to P3 can be direct (no obstacles in that path).
         """
         sequence = []
         
-        for i, target_pose in enumerate(self.target_waypoints):
-            # Add joint-space transit point
-            sequence.append({
-                'type': 'joint',
-                'target_joints': self.safe_transit_joints.copy(),
-                'target_pose': None,
-                'description': f'Transit (joint) before P{i+1}',
-                'is_target': False
-            })
-            
-            # Add Cartesian target waypoint
-            sequence.append({
-                'type': 'cartesian',
-                'target_joints': None,
-                'target_pose': target_pose,
-                'description': f'Target P{i+1} (Cartesian)',
-                'is_target': True
-            })
+        # Waypoint 1: P1 (direct from start)
+        sequence.append({
+            'type': 'cartesian',
+            'target_joints': None,
+            'target_pose': self.target_waypoints[0],
+            'description': 'Target P1 (Cartesian)',
+            'is_target': True
+        })
+        
+        # Transit point (only after P1, before P2)
+        sequence.append({
+            'type': 'joint',
+            'target_joints': self.safe_transit_joints.copy(),
+            'target_pose': None,
+            'description': 'Transit (joint) between P1 and P2',
+            'is_target': False
+        })
+        
+        # Waypoint 2: P2
+        sequence.append({
+            'type': 'cartesian',
+            'target_joints': None,
+            'target_pose': self.target_waypoints[1],
+            'description': 'Target P2 (Cartesian)',
+            'is_target': True
+        })
+        
+        # Waypoint 3: P3 (direct from P2 - no transit needed)
+        sequence.append({
+            'type': 'cartesian',
+            'target_joints': None,
+            'target_pose': self.target_waypoints[2],
+            'description': 'Target P3 (Cartesian)',
+            'is_target': True
+        })
         
         return sequence
     
@@ -165,10 +186,7 @@ class ArmControlNode(Node):
         if self.joint_positions is None:
             return np.zeros(6)
         
-        # Compute joint errors
         joint_errors = target_joints - self.joint_positions
-        
-        # Proportional control
         joint_velocities = joint_errors * self.joint_gain
         
         # Limit velocities
@@ -264,25 +282,19 @@ class ArmControlNode(Node):
         distance_to_target = np.linalg.norm(pos_error_vector)
         orientation_error = self.compute_orientation_error(current_quat, target_quat)
         
-        # Get blending weights
         pos_weight, ori_weight = self.compute_blending_weights(
             distance_to_target, orientation_error
         )
         
-        # Position control
         linear_vel = pos_error_vector * self.position_gain_base * pos_weight
-        
-        # Orientation control
         angular_vel = self.compute_angular_velocity_from_quaternion_error(
             current_quat, target_quat
         ) * self.orientation_gain_base * ori_weight
         
-        # Apply velocity scaling
         velocity_scale = self.compute_velocity_scaling(distance_to_target, orientation_error)
         linear_vel *= velocity_scale
         angular_vel *= velocity_scale
         
-        # Apply velocity limits
         if self.servo_phase == "COARSE_APPROACH":
             max_linear = self.max_linear_velocity_coarse
             max_angular = self.max_angular_velocity_coarse
@@ -321,7 +333,7 @@ class ArmControlNode(Node):
         if self.current_waypoint_idx >= len(self.waypoints):
             self.get_logger().info('✓ All waypoints reached! Shutting down...')
             self.stop_robot()
-            time.sleep(1.0)
+            time.sleep(0.5)  # Brief pause before shutdown
             rclpy.shutdown()
             return
         
@@ -355,7 +367,7 @@ class ArmControlNode(Node):
             self.move_to_next_waypoint()
             return
         
-        # ========== JOINT SPACE CONTROL ==========
+        # ========== JOINT SPACE CONTROL (FAST TRANSITS) ==========
         if self.control_mode == "JOINT_CONTROL":
             target_joints = waypoint['target_joints']
             
@@ -366,19 +378,19 @@ class ArmControlNode(Node):
             msg.data = joint_velocities.tolist()
             self.joint_pub.publish(msg)
             
-            # Check if reached
+            # Check if reached (with loose tolerance)
             if self.check_joint_waypoint_reached(target_joints):
                 joint_errors = np.abs(target_joints - self.joint_positions)
                 self.get_logger().info(
                     f'\n{"="*60}\n'
-                    f'✓ {waypoint["description"]} REACHED!\n'
+                    f'✓ {waypoint["description"]} REACHED (fast transit)!\n'
                     f'  Max joint error: {np.max(joint_errors):.4f} rad ({np.degrees(np.max(joint_errors)):.2f}°)\n'
                     f'  Time taken: {elapsed_time:.2f}s\n'
                     f'{"="*60}'
                 )
                 
                 self.stop_robot()
-                time.sleep(0.2)  # Short pause for stability
+                time.sleep(0.1)  # REDUCED: Just 0.1s for stability
                 self.move_to_next_waypoint()
                 return
             
@@ -386,11 +398,11 @@ class ArmControlNode(Node):
             if time.time() - self.last_log_time > 2.0:
                 joint_errors = np.abs(target_joints - self.joint_positions)
                 self.get_logger().info(
-                    f'[{elapsed_time:.1f}s] JOINT_CONTROL - Max error: {np.max(joint_errors):.4f} rad'
+                    f'[{elapsed_time:.1f}s] JOINT_CONTROL (fast) - Max error: {np.max(joint_errors):.4f} rad'
                 )
                 self.last_log_time = time.time()
         
-        # ========== CARTESIAN SPACE CONTROL ==========
+        # ========== CARTESIAN SPACE CONTROL (PRECISE TARGETS) ==========
         elif self.control_mode == "CARTESIAN_SERVO":
             # Get current pose
             current_pos, current_quat = self.get_current_pose()
@@ -437,11 +449,7 @@ class ArmControlNode(Node):
                 
                 self.stop_robot()
                 
-                # Pause only at actual targets
-                if waypoint['is_target']:
-                    self.get_logger().info('Target reached! Pausing for 1 second...')
-                    time.sleep(1.0)
-                
+                # NO PAUSE - immediately move to next (removed 1 second delay)
                 self.move_to_next_waypoint()
                 return
             
@@ -462,19 +470,20 @@ class ArmControlNode(Node):
         """Stop both joint and Cartesian control"""
         # Stop Cartesian servo
         twist_msg = Twist()
-        for _ in range(10):
+        for _ in range(5):  # REDUCED: 5 iterations instead of 10
             self.twist_pub.publish(twist_msg)
-            time.sleep(0.01)
+            time.sleep(0.005)  # REDUCED: 5ms instead of 10ms
         
         # Stop joint control
         joint_msg = Float64MultiArray()
         joint_msg.data = [0.0] * 6
-        for _ in range(10):
+        for _ in range(5):  # REDUCED: 5 iterations instead of 10
             self.joint_pub.publish(joint_msg)
-            time.sleep(0.01)
+            time.sleep(0.005)  # REDUCED: 5ms instead of 10ms
 
 
 def main(args=None):
+    time.sleep(0.3)
     rclpy.init(args=args)
     node = ArmControlNode()
     
