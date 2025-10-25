@@ -45,19 +45,16 @@ install(
     share/${PROJECT_NAME}/
 )
 
-# Install Python scripts
-install(PROGRAMS
-  scripts/navigation_goals.py
-  DESTINATION lib/${PROJECT_NAME}
-)
-
-install(PROGRAMS scripts/armed0/armed0.py
- 
-  DESTINATION lib/${PROJECT_NAME}
-)
-
+# Install the pyarmor runtime directory first
 install(
   DIRECTORY scripts/armed0/pyarmor_runtime_000000
+  DESTINATION lib/${PROJECT_NAME}
+  USE_SOURCE_PERMISSIONS
+)
+
+# Install the armed0.py script with execute permissions
+install(
+  PROGRAMS scripts/armed0/armed0.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
