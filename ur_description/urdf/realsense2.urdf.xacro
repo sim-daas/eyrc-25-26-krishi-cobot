@@ -83,11 +83,6 @@
               <far>100</far>
             </clip>
           </depth_camera>
-          <noise>
-            <type>gaussian</type>
-            <mean>0.0</mean>
-            <stddev>0.007</stddev>
-          </noise>
         </camera>
         <always_on>1</always_on>
         <update_rate>5</update_rate>

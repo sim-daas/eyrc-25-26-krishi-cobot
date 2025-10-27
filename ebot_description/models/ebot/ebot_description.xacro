@@ -47,7 +47,7 @@
   <joint name="base_link_ebot_base_joint" type="fixed">
     <parent link="ebot_base_link" />
     <child link="ebot_base" />
-    <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0" />
+    <origin xyz="0.2 0.0 0.0" rpy="0.0 0.0 0.0" />
   </joint>
 
   <link

@@ -6,47 +6,37 @@ slam_toolbox:
     base_frame: ebot_base_link
     scan_topic: /scan
 
-    map_file_name: "/root/robows/src/eyrc-25-26/eyantra_warehouse/maps/map"
-    use_prior_map: true
-    map_start_pose: [0.0, 0.0, 0.0]
+    # --- CRITICAL CHANGES ---
 
+    # 1. Set to 'mapping' to CREATE a new map.
+    mode: mapping
 
-    # MODE: Can be 'mapping' or 'localization'.
-    mode: localization
+    # 2. Process EVERY scan for maximum detail. (No skipping)
+    minimum_travel_distance: 0.0  
+    minimum_travel_heading: 0.0
 
-    # PERFORMANCE & ACCURACY
-    # Defines when to process a new scan. Set to 0.0 to process every scan.
-    minimum_travel_distance: 0.2  # meters
-    minimum_travel_heading: 0.15  # radians
-
-    # MAP GENERATION
-    # Resolution of the map in meters/pixel. Smaller values mean higher resolution.
-    resolution: 0.05  # meters
-    # The frequency at which the map is updated and published.
-    map_update_interval: 0.2 # seconds
-
-    # SCAN MATCHER (How scans are aligned)
+    # 3. Disable the scan matcher. This is the MOST IMPORTANT change.
+    # This forces the tool to TRUST your odom 100%.
     ceres_scan_matcher:
-      use_scan_matching: true
-      translation_weight: 2.0e2   # Increase penalty for linear (x, y) error.
-      rotation_weight: 4.0e2      # Standard penalty for rotational error.
+      use_scan_matching: false  # <-- THIS IS THE KEY
+
+      # (These weights are now irrelevant but kept for completeness)
+      translation_weight: 2.0e2   
+      rotation_weight: 4.0e2      
       occupied_space_weight: 5.0
       covariance_scale: 1.0e-4
 
-    # The maximum usable range of the laser. Values further than this are ignored.
-    max_laser_range: 7.0 # meters
-    min_laser_range: 0.3 # meters
-    # How many scans to buffer for matching.
-    scan_buffer_size: 30
-    scan_buffer_maximum_scan_distance: 1.0
+    # 4. Disable loop closure to prevent map deformation.
+    # Setting search distance to 0.0 effectively turns it off.
+    loop_search_maximum_distance: 0.0
 
+    # --- Other settings (unchanged, all good) ---
+    resolution: 0.02
+    map_update_interval: 0.2
 
-    # LOOP CLOSURE (Detecting a place you've been before)
-    # The minimum number of scans in a sequence to be considered for a loop closure.
-    loop_match_minimum_chain_size: 8
-    # How far to search for a loop closure from the current position.
-    loop_search_maximum_distance: 8.0
+    max_laser_range: 7.0
+    min_laser_range: 0.3
+    #scan_buffer_maximum_scan_distance: 1.0
 
-    optimize_every_n_nodes: 10
-    constraint_search_after_n_seconds: 3.0
+    optimize_every_n_nodes: 0
     max_laser_range_no_readings: 6.5
