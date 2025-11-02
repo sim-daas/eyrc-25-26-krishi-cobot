@@ -9,11 +9,13 @@ slam_toolbox:
     # --- CRITICAL CHANGES ---
 
     # 1. Set to 'mapping' to CREATE a new map.
-    mode: mapping
-
+    mode: localization
+    use_prior_map: true
+    map_file_name: "/root/robows/src/eyrc-25-26/map" # <-- Your saved map
+    map_start_pose: [0.0, 0.0, 0.0]
     # 2. Process EVERY scan for maximum detail. (No skipping)
-    minimum_travel_distance: 0.0  
-    minimum_travel_heading: 0.0
+    minimum_travel_distance: 0.001  
+    minimum_travel_heading: 0.001
 
     # 3. Disable the scan matcher. This is the MOST IMPORTANT change.
     # This forces the tool to TRUST your odom 100%.
@@ -31,8 +33,8 @@ slam_toolbox:
     loop_search_maximum_distance: 0.0
 
     # --- Other settings (unchanged, all good) ---
-    resolution: 0.02
-    map_update_interval: 0.2
+    resolution: 0.04
+    map_update_interval: 0.1
 
     max_laser_range: 7.0
     min_laser_range: 0.3

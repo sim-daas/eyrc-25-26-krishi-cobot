@@ -2,6 +2,10 @@
 
 This repository contains the simulation setup for the Krishi Cobot (eYantra Robotics Competition 2025-26).
 
+## Project Summary
+
+This repository is a collaborative multi-robot simulation for the Krishi coBot challenge. It integrates a mobile eBot with LiDAR-based navigation, an eye-in-hand depth camera, and a UR5 manipulator for perception and manipulation. Components communicate over ROS2; simulation uses Ignition Gazebo. The setup supports sensor fusion, object/aruco detection, and TF-based coordination for multi-agent tasks in agricultural scenarios.
+
 ## System setup
 
 run the following in your bash shell on host system
