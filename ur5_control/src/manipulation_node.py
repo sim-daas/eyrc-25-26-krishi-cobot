@@ -33,11 +33,14 @@ class ManipulationNode(Node):
         # --- Constants ---
         self.team_id = 1505
         self.home_joints = np.array([-1.57, -1.57, 0.0, -1.57, 0.0, 0.0]) # Example home
+        # SAFE TRANSIT JOINT CONFIGURATION (from arm_control.py)
+        self.safe_transit_joints = np.array([-3.973, -1.596, 0.0, 0.0, 0.0, 0.0])
         self.bin_pose = (np.array([-0.806, 0.010, 0.182]), np.array([-0.684, 0.726, 0.05, 0.008])) # P3 from arm_control
         
         # --- State ---
         self.joint_positions = None
         self.current_state = "INIT"
+        self.next_state = None # For mid-point transitions
         self.fruit_index = 0
         self.max_fruits = 3 # Try up to 3 fruits, or until lookup fails
         self.fertilizer_done = False
@@ -52,11 +55,6 @@ class ManipulationNode(Node):
 
     def joint_callback(self, msg):
         # UR5 joints are usually: shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3
-        # Ensure order matches if needed. Assuming standard order.
-        # Note: msg.name might be sorted alphabetically, so be careful. 
-        # For this task, we assume the driver publishes in correct order or we map them.
-        # Standard UR driver order: shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3
-        # But let's just take the first 6 for now as per arm_control.py
         self.joint_positions = np.array(msg.position[:6])
 
     def get_tf(self, target_frame, source_frame="base_link"):
@@ -79,14 +77,8 @@ class ManipulationNode(Node):
         req.model2_name = 'ur5'
         req.link2_name = 'wrist_3_link'
         
-        future = self.attach_client.call_async(req)
-        # We are in a timer callback, so we can't block indefinitely. 
-        # But for simplicity in this state machine, we might want to just fire and forget or check later.
-        # However, to ensure attachment, we should probably wait a bit.
-        # Since we can't await in a sync callback easily without blocking the loop, 
-        # we will assume it works or handle it in a separate state if needed.
-        # For now, let's just log.
-        self.get_logger().info(f"Calling Attach for {model_name}")
+        self.attach_client.call_async(req)
+        self.get_logger().info(f"-> Attaching {model_name}...")
         return True
 
     def call_detach_service(self, model_name):
@@ -101,7 +93,7 @@ class ManipulationNode(Node):
         req.link2_name = 'wrist_3_link'
         
         self.detach_client.call_async(req)
-        self.get_logger().info(f"Calling Detach for {model_name}")
+        self.get_logger().info(f"-> Detaching {model_name}...")
         return True
 
     def move_joint(self, target_joints):
@@ -182,10 +174,16 @@ class ManipulationNode(Node):
         # --- State Machine ---
         
         if self.current_state == "INIT":
-            # Just wait a bit or move to a safe start
-            self.get_logger().info("State: INIT")
-            self.current_state = "SEARCH_FRUIT"
+            self.get_logger().info("State: INIT -> Moving to Safe Mid-Point")
+            self.next_state = "SEARCH_FRUIT"
+            self.current_state = "MOVE_TO_MIDPOINT"
             
+        elif self.current_state == "MOVE_TO_MIDPOINT":
+            if self.move_joint(self.safe_transit_joints):
+                self.get_logger().info(f"Reached Mid-Point. Transitioning to {self.next_state}")
+                self.current_state = self.next_state
+                time.sleep(0.5)
+
         elif self.current_state == "SEARCH_FRUIT":
             # Look for next fruit TF
             fruit_frame = f"{self.team_id}_bad_fruit_{self.fruit_index}"
@@ -193,79 +191,60 @@ class ManipulationNode(Node):
             
             if pos is not None:
                 self.target_fruit_pos = pos
-                # Define Grasp Orientation: Z-axis down (pointing to fruit)
-                # Standard UR5 base: Z up. Fruit on table.
-                # To point Z down: Rotate 180 around X or Y.
-                # Let's use a fixed orientation for grasping fruits from top.
-                # Q for Z-down: [1, 0, 0, 0] (w,x,y,z) -> 180 deg rotation about X
-                # Euler: Roll=pi, Pitch=0, Yaw=0
+                # Define Grasp Orientation: Z-axis down
                 r = Rotation.from_euler('xyz', [np.pi, 0, 0])
-                self.target_fruit_quat = r.as_quat() # x,y,z,w
+                self.target_fruit_quat = r.as_quat() 
                 
-                self.get_logger().info(f"Found fruit {self.fruit_index}")
+                self.get_logger().info(f"Found {fruit_frame}. Moving to APPROACH_FRUIT")
                 self.current_state = "APPROACH_FRUIT"
             else:
-                # If we tried enough times or index is high, move to fertilizer
-                if self.fruit_index > 5: # Timeout/Max check
+                if self.fruit_index > 5: 
                     self.get_logger().info("No more fruits found. Moving to Fertilizer.")
-                    self.current_state = "SEARCH_FERTILIZER"
+                    self.next_state = "SEARCH_FERTILIZER"
+                    self.current_state = "MOVE_TO_MIDPOINT"
                 else:
-                    # Keep searching or increment if we think we missed one?
-                    # For now, just retry same index. 
-                    # If it never appears, we might get stuck. 
-                    # Let's assume perception is running.
+                    # Retry or just wait
                     pass
 
         elif self.current_state == "APPROACH_FRUIT":
-            # Move to offset
-            # Approach along Z (normal to fruit top)
-            # We want EE Z to align with World -Z (pointing down).
-            # So we approach from +Z relative to fruit.
-            # Actually, get_approach_pose backs up along the axis.
-            # If we want to be ABOVE the fruit, and our Z is pointing DOWN, 
-            # backing up along +Z (tool frame) moves us UP (world frame).
-            # So offset_dist should be positive.
-            
             approach_pos, approach_quat = self.get_approach_pose(
                 self.target_fruit_pos, self.target_fruit_quat, 0.15, axis='z'
             )
             
             if self.move_cartesian(approach_pos, approach_quat):
+                self.get_logger().info("Reached Approach Pose. Moving to GRASP_FRUIT")
                 self.current_state = "GRASP_FRUIT"
                 time.sleep(0.5)
 
         elif self.current_state == "GRASP_FRUIT":
-            # Move closer
-            # Target is the fruit position (plus maybe small offset to not crash)
-            # Fruit center is likely inside the fruit. We want gripper to be around it.
-            # Let's go to z + 0.05 or something?
-            # User said: "Grasp at < 0.10m"
-            
             grasp_pos = self.target_fruit_pos.copy()
-            grasp_pos[2] += 0.02 # Slightly above center to avoid smashing
+            grasp_pos[2] += 0.02 
             
             if self.move_cartesian(grasp_pos, self.target_fruit_quat):
                 self.call_attach_service("bad_fruit")
-                time.sleep(1.0) # Wait for attach
+                time.sleep(1.0) 
+                self.get_logger().info("Attached Fruit. Retracting...")
                 self.current_state = "RETRACT_FRUIT"
 
         elif self.current_state == "RETRACT_FRUIT":
-            # Move up
             retract_pos = self.target_fruit_pos.copy()
             retract_pos[2] += 0.2
             
             if self.move_cartesian(retract_pos, self.target_fruit_quat):
-                self.current_state = "MOVE_TO_BIN"
+                self.get_logger().info("Retracted. Moving to Mid-Point before Bin.")
+                self.next_state = "MOVE_TO_BIN"
+                self.current_state = "MOVE_TO_MIDPOINT"
 
         elif self.current_state == "MOVE_TO_BIN":
-            # Move to Bin Pose
             bin_pos, bin_quat = self.bin_pose
             
             if self.move_cartesian(bin_pos, bin_quat):
                 self.call_detach_service("bad_fruit")
                 time.sleep(1.0)
                 self.fruit_index += 1
-                self.current_state = "SEARCH_FRUIT"
+                self.get_logger().info(f"Dropped Fruit. Next Index: {self.fruit_index}. Moving to Mid-Point.")
+                self.next_state = "SEARCH_FRUIT"
+                self.current_state = "MOVE_TO_MIDPOINT"
 
         elif self.current_state == "SEARCH_FERTILIZER":
             pos, _ = self.get_tf("1505_fertiliser_can")
@@ -273,67 +252,35 @@ class ManipulationNode(Node):
                 self.target_can_pos = pos
                 
                 # Orientation: Align EE Z-axis with Can Y-axis.
-                # Can is likely upright. Can Y-axis is horizontal.
-                # We want EE Z to point at Can.
-                # And we want EE Z to be parallel to Can Y.
-                # This implies we approach from the side.
-                # We need to construct a rotation where Z_ee = Y_can.
-                # And we need to define X_ee and Y_ee.
-                # Usually X_ee up or down?
-                
-                # Let's try to look at the can from the Y direction.
-                # If Can Y is (0, 1, 0) in world (example), we want EE Z to be (0, -1, 0) (pointing opposite to Y to look at it? Or align with it?)
-                # User said: "Align EE Z-axis with Fertilizer Can Y-axis".
-                # If Can Y points OUT of the surface we want to grasp, then we want EE Z to point IN (opposite).
-                # If Can Y points ALONG the surface, that's different.
-                # "Normal to side surface" usually means the radial vector.
-                # If the user says "Can Y-axis", I assume the Can's local Y axis IS the normal.
-                # So we want EE Z to be anti-parallel to Can Y? Or Parallel?
-                # Let's assume we want to align them.
-                
-                # To be safe, let's just use the TF orientation of the can and rotate our gripper relative to it.
-                # If we want EE Z to match Can Y:
-                # R_can has columns [X_c, Y_c, Z_c].
-                # We want R_ee such that Z_ee = Y_c.
-                # We can choose Y_ee = Z_c (up).
-                # Then X_ee = Y_ee cross Z_ee = Z_c cross Y_c = -X_c.
-                
-                # Get Can Rotation Matrix
                 _, can_quat = self.get_tf("1505_fertiliser_can")
                 r_can = Rotation.from_quat(can_quat)
                 m_can = r_can.as_matrix()
                 x_c, y_c, z_c = m_can[:,0], m_can[:,1], m_can[:,2]
                 
                 z_ee = y_c # Align EE Z with Can Y
-                y_ee = z_c # Align EE Y with Can Z (gripper fingers vertical?)
+                y_ee = z_c # Align EE Y with Can Z
                 x_ee = np.cross(y_ee, z_ee)
                 
                 m_ee = np.column_stack((x_ee, y_ee, z_ee))
                 r_ee = Rotation.from_matrix(m_ee)
                 self.target_can_quat = r_ee.as_quat()
                 
+                self.get_logger().info("Found Fertilizer Can. Moving to APPROACH_FERTILIZER")
                 self.current_state = "APPROACH_FERTILIZER"
             else:
                 self.get_logger().info("Searching for Fertilizer...")
 
         elif self.current_state == "APPROACH_FERTILIZER":
-            # Approach along Z (which is aligned with Can Y)
-            # Offset > 0.2m
             approach_pos, approach_quat = self.get_approach_pose(
                 self.target_can_pos, self.target_can_quat, 0.25, axis='z'
             )
-            # Note: We are backing up along Z_ee.
-            # If Z_ee = Y_can, we are moving in -Y_can direction.
-            # If Y_can points OUT of the can, we are moving away from it. Correct.
             
             if self.move_cartesian(approach_pos, approach_quat):
+                self.get_logger().info("Reached Approach Pose. Moving to GRASP_FERTILIZER")
                 self.current_state = "GRASP_FERTILIZER"
                 time.sleep(0.5)
 
         elif self.current_state == "GRASP_FERTILIZER":
-            # Move closer (< 0.2m)
-            # Let's go to 0.15m from center? Or closer?
-            # Can radius is small.
             grasp_pos, _ = self.get_approach_pose(
                 self.target_can_pos, self.target_can_quat, 0.12, axis='z'
             )
@@ -341,32 +288,26 @@ class ManipulationNode(Node):
             if self.move_cartesian(grasp_pos, self.target_can_quat):
                 self.call_attach_service("fertiliser_can")
                 time.sleep(1.0)
-                self.current_state = "MOVE_TO_LANDING"
+                self.get_logger().info("Attached Fertilizer. Moving to Mid-Point before Landing.")
+                self.next_state = "MOVE_TO_LANDING"
+                self.current_state = "MOVE_TO_MIDPOINT"
 
         elif self.current_state == "MOVE_TO_LANDING":
-            # Move to landing_ebot
-            # First retract a bit?
-            # Then move to landing pose.
             landing_pos, _ = self.get_tf("landing_ebot")
             if landing_pos is not None:
-                # Add some Z offset for landing
                 landing_pos[2] += 0.2
-                
-                # Orientation? Keep current or flat?
-                # Let's go flat (Z down)
                 r = Rotation.from_euler('xyz', [np.pi, 0, 0])
                 landing_quat = r.as_quat()
                 
                 if self.move_cartesian(landing_pos, landing_quat):
                     self.call_detach_service("fertiliser_can")
+                    self.get_logger().info("Placed Fertilizer. Mission Complete!")
                     self.current_state = "DONE"
             else:
                 self.get_logger().info("Searching for landing_ebot...")
 
         elif self.current_state == "DONE":
-            self.get_logger().info("Mission Complete!")
             self.stop_robot()
-            # Optional: Shutdown?
 
 def main(args=None):
     rclpy.init(args=args)
