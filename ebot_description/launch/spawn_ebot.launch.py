@@ -53,7 +53,11 @@ def generate_launch_description():
             'use_sim_time': LaunchConfiguration('use_sim_time'),
             'robot_description': robot_desc,
             # 'frame_prefix': 'ebot_'
-        }]
+        }],
+        remappings=[
+            ('/ebot/tf', '/tf'),
+            ('/ebot/tf_static', '/tf_static'),
+        ]
     )
 
     # 5) Spawn the ebot after a short delay with namespace
