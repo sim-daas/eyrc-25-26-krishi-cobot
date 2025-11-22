@@ -34,4 +34,8 @@ install(PROGRAMS
     src/arm_control.py
     DESTINATION lib/${PROJECT_NAME}
 )
+install(PROGRAMS
+    src/task1b_aruco_detection.py
+    DESTINATION lib/${PROJECT_NAME}
+)
 ament_package()

@@ -7,32 +7,9 @@ on_project_start: |
   source install/setup.bash
 
 windows:
-  - main:
-      layout: main-vertical
-      panes:
-        # Left side - World + Arm (vertical split)
-        - world:
-            - sleep 2
-            - echo "=== Launching Gazebo World ==="
-            - ros2 launch eyantra_warehouse task1.launch.py
-        
-        - arm:
-            - sleep 8
-            - echo "=== Spawning UR5 Arm ==="
-            - ros2 launch ur_simulation_gz spawn_arm.launch.py
-        
-        # Right side - Control + Monitor (vertical split)
-        - control:
-            - sleep 25
-            - echo "=== Starting Arm Control Node ==="
-            - cd ~/robows/src/eyrc-25-26/ur5_control/src
-            - python3 arm_control.py
-        
-        - monitor:
-            - sleep 15
-            - echo "=== Monitor & Debug Window ==="t"
-            - echo "Useful commands:"          - echo "  ros2 topic echo /joint_states"
-            - echo "  ros2 topic list"- echo "  ros2 topic echo /delta_twist_cmds"
-            - echo "  ros2 topic echo /joint_states --once""  ros2 node list"
-            - echo "  ros2 node list"- echo ""
-            - echo "  ros2 topic hz /delta_twist_cmds"ss Enter to start monitoring..."
+  - warehouse:
+      - ros2 launch eyantra_warehouse task2b.launch.py
+  - arm:
+      - ros2 launch ur_simulation_gz spawn_arm.launch.py
+  - blank:
+      - sleep 10000
