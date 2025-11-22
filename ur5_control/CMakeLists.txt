@@ -38,4 +38,9 @@ install(PROGRAMS
     src/task1b_aruco_detection.py
     DESTINATION lib/${PROJECT_NAME}
 )
+install(PROGRAMS
+    src/perception_node.py
+    src/manipulation_node.py
+    DESTINATION lib/${PROJECT_NAME}
+)
 ament_package()
