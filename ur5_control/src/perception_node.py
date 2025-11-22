@@ -91,6 +91,16 @@ class PerceptionNode(Node):
             callback_group=self.cb_group,
         )
 
+        # --- State ---
+        self.detection_complete = False
+        self.static_transforms = {} # Key: child_frame_id, Value: (x, y, z, rvec)
+        self.frozen_image = None
+        
+        # We need to find: 3 fruits, 1 fertilizer, 1 landing
+        self.required_fruits = 3
+        self.found_fertilizer = False
+        self.found_landing = False
+
         # --- Timer ---
         self.create_timer(0.1, self.process_image, callback_group=self.cb_group)
 
@@ -100,12 +110,14 @@ class PerceptionNode(Node):
         self.get_logger().info("Perception Node started.")
 
     def depthimagecb(self, data):
+        if self.detection_complete: return
         try:
             self.depth_image = self.bridge.imgmsg_to_cv2(data, desired_encoding="passthrough")
         except Exception as e:
             self.get_logger().error(f"Failed to convert depth image: {e}")
 
     def colorimagecb(self, data):
+        if self.detection_complete: return
         try:
             self.cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
             self.image_stamp = data.header.stamp
@@ -168,14 +180,6 @@ class PerceptionNode(Node):
     def publish_tf_from_camera_point(self, x, y, z, child_frame_id, trans, rvec=None):
         """
         Transforms point (x,y,z) in camera frame to base_link and publishes TF.
-        x, y, z: Coordinates in camera frame (following standard camera optical frame: Z forward, X right, Y down)
-        BUT NOTE: The boilerplate code used a specific mapping:
-            point_in_camera.point.x = z
-            point_in_camera.point.y = -x
-            point_in_camera.point.z = -y
-        This suggests the camera_link frame in TF might be different from the optical frame, 
-        OR the boilerplate was correcting for a specific mounting.
-        I will stick to the boilerplate's mapping for consistency.
         """
         
         point_in_camera = PointStamped()
@@ -204,13 +208,6 @@ class PerceptionNode(Node):
         t.transform.translation.y = point_in_base.point.y
         t.transform.translation.z = point_in_base.point.z
         
-        # Orientation
-        # For fruits: Identity
-        # For ArUco: We could use rvec, but for now let's stick to identity or simple orientation
-        # The user didn't specify orientation for fruits, but for Can we need Y-axis align.
-        # The TF itself usually represents the object pose. 
-        # For simplicity and consistency with boilerplate, we use Identity (0,0,0)
-        # The manipulation node will handle the approach vector relative to this point.
         q = quaternion_from_euler(0, 0, 0)
         t.transform.rotation.x = q[0]
         t.transform.rotation.y = q[1]
@@ -218,8 +215,24 @@ class PerceptionNode(Node):
         t.transform.rotation.w = q[3]
 
         self.tf_broadcaster.sendTransform(t)
+        
+        # Store for static publishing
+        self.static_transforms[child_frame_id] = (x, y, z, rvec)
 
     def process_image(self):
+        # If detection complete, just publish static TFs and show frozen image
+        if self.detection_complete:
+            trans = self.get_cam_to_base_transform()
+            if trans is None: return
+            
+            for child_frame_id, (x, y, z, rvec) in self.static_transforms.items():
+                self.publish_tf_from_camera_point(x, y, z, child_frame_id, trans, rvec)
+            
+            if SHOW_IMAGE and self.frozen_image is not None:
+                cv2.imshow("perception_view", self.frozen_image)
+                cv2.waitKey(1)
+            return
+
         if self.cv_image is None or self.depth_image is None or self.image_stamp is None:
             return
 
@@ -233,6 +246,7 @@ class PerceptionNode(Node):
         # ---------------------------------------------------------
         bad_fruits = self.detect_bad_fruits(self.cv_image)
         
+        current_fruits_found = 0
         for i, fruit in enumerate(bad_fruits):
             cX, cY = fruit["center"]
             contour = fruit["contour"]
@@ -249,7 +263,6 @@ class PerceptionNode(Node):
                 depth_val = float(raw_depth)
                 if np.isnan(depth_val) or depth_val == 0.0:
                     continue
-                # Boilerplate depth conversion check
                 if depth_val > 10.0:
                     distance_m = depth_val / 1000.0
                 else:
@@ -265,6 +278,7 @@ class PerceptionNode(Node):
             # Publish TF
             tf_name = f"{self.team_id}_bad_fruit_{i}"
             self.publish_tf_from_camera_point(x_cam, y_cam, z_cam, tf_name, trans)
+            current_fruits_found += 1
 
 
         # ---------------------------------------------------------
@@ -274,6 +288,9 @@ class PerceptionNode(Node):
         corners, ids, rejected = aruco.detectMarkers(
             gray, self.aruco_dict, parameters=self.aruco_params
         )
+
+        self.found_fertilizer = False
+        self.found_landing = False
 
         if ids is not None:
             rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(
@@ -293,18 +310,15 @@ class PerceptionNode(Node):
                     'tvec': tvecs[i][0]
                 })
 
-            # Sort markers Right -> Left (Descending cX) as per previous logic?
-            # Wait, previous logic in task1b_aruco_detection.py:
-            # "Sort markers by cX in descending order (Right -> Left)"
-            # "rank 0 (right-most) = 1505_fertilizer_can"
-            # "rank 1 = landing_ebot"
             detected_markers.sort(key=lambda x: x['cX'], reverse=True)
 
             for rank, marker in enumerate(detected_markers):
                 if rank == 0:
                     tf_name = "1505_fertiliser_can"
+                    self.found_fertilizer = True
                 elif rank == 1:
                     tf_name = "landing_ebot"
+                    self.found_landing = True
                 else:
                     tf_name = f"aruco_{marker['id']}"
 
@@ -314,12 +328,17 @@ class PerceptionNode(Node):
                 )
 
                 tvec = marker['tvec']
-                # tvec is [x, y, z] in camera frame
                 self.publish_tf_from_camera_point(tvec[0], tvec[1], tvec[2], tf_name, trans, marker['rvec'])
 
         if SHOW_IMAGE:
             cv2.imshow("perception_view", display_image)
             cv2.waitKey(1)
+            
+        # Check completion condition
+        if current_fruits_found >= self.required_fruits and self.found_fertilizer and self.found_landing:
+            self.get_logger().info("All objects detected! Freezing perception and switching to static TF.")
+            self.detection_complete = True
+            self.frozen_image = display_image
 
 def main(args=None):
     rclpy.init(args=args)

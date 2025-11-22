@@ -42,19 +42,38 @@ class ManipulationNode(Node):
         self.current_state = "INIT"
         self.next_state = None # For mid-point transitions
         self.fruit_index = 0
-        self.max_fruits = 3 # Try up to 3 fruits, or until lookup fails
+        self.max_fruits = 2 # Try up to 3 fruits, or until lookup fails
         self.fertilizer_done = False
         
-        # --- Control Params (from arm_control.py) ---
-        self.position_tolerance = 0.02 # Tighter for grasping
+        # --- Control Params (Restored from arm_control.py) ---
+        self.position_tolerance = 0.09 # Tighter for grasping
         self.orientation_tolerance = 0.1
         self.joint_tolerance = 0.1
         
-        self.control_timer = self.create_timer(0.05, self.control_loop)
-        self.get_logger().info("Manipulation Node Started")
+        # Velocity limits
+        self.max_joint_velocity = 1.5
+        self.max_linear_velocity_coarse = 0.5
+        self.max_angular_velocity_coarse = 1.0
+        self.max_linear_velocity_fine = 0.19
+        self.max_angular_velocity_fine = 0.7
+        
+        # Distance thresholds
+        self.far_distance = 0.4
+        self.medium_distance = 0.2
+        self.close_distance = 0.12
+        
+        # Gains
+        self.joint_gain = 5
+        self.position_gain_base = 4.0 # Increased from 2.5 to reduce slowdown
+        self.orientation_gain_base = 3.5
+        
+        self.servo_phase = "COARSE_APPROACH"
+        self.use_fine_control = False # Option to switch off fine_tune approach
+        
+        self.control_timer = self.create_timer(0.01, self.control_loop) # Faster loop (100Hz)
+        self.get_logger().info("Manipulation Node Started (Advanced Motion Control)")
 
     def joint_callback(self, msg):
-        # UR5 joints are usually: shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3
         self.joint_positions = np.array(msg.position[:6])
 
     def get_tf(self, target_frame, source_frame="base_link"):
@@ -96,6 +115,94 @@ class ManipulationNode(Node):
         self.get_logger().info(f"-> Detaching {model_name}...")
         return True
 
+    # --- Advanced Motion Control Methods ---
+
+    def compute_orientation_error(self, current_quat, target_quat):
+        current_quat = current_quat / np.linalg.norm(current_quat)
+        target_quat = target_quat / np.linalg.norm(target_quat)
+        r_current = Rotation.from_quat(current_quat)
+        r_target = Rotation.from_quat(target_quat)
+        r_diff = r_target * r_current.inv()
+        return r_diff.magnitude()
+
+    def compute_angular_velocity_from_quaternion_error(self, current_quat, target_quat):
+        current_quat = current_quat / np.linalg.norm(current_quat)
+        target_quat = target_quat / np.linalg.norm(target_quat)
+        r_current = Rotation.from_quat(current_quat)
+        r_target = Rotation.from_quat(target_quat)
+        r_error = r_target * r_current.inv()
+        return r_error.as_rotvec()
+
+    def compute_blending_weights(self, distance_to_target, orientation_error):
+        if self.servo_phase == "COARSE_APPROACH":
+            if distance_to_target > self.far_distance:
+                return 0.80, 0.20
+            elif distance_to_target > self.medium_distance:
+                return 0.65, 0.35
+            else:
+                return 0.55, 0.45
+        else:  # FINE_TUNE
+            if orientation_error > 0.3:
+                return 0.30, 0.70
+            elif distance_to_target > self.close_distance:
+                return 0.45, 0.55
+            else:
+                return 0.25, 0.75
+
+    def compute_velocity_scaling(self, distance_to_target, orientation_error):
+        if self.servo_phase == "COARSE_APPROACH":
+            # Less aggressive scaling: maintain higher speed until very close
+            if distance_to_target < self.medium_distance:
+                # Scale from 1.0 down to 0.3 linearly
+                distance_scale = 0.3 + 0.7 * (distance_to_target / self.medium_distance)
+            else:
+                distance_scale = 1.0
+        else:  # FINE_TUNE
+            if distance_to_target < self.close_distance:
+                distance_scale = 0.5 + 0.5 * (distance_to_target / self.close_distance)
+            else:
+                distance_scale = 0.8
+        
+        if orientation_error > 1.0:
+            orientation_scale = 0.8
+        elif orientation_error > 0.5:
+            orientation_scale = 0.9
+        else:
+            orientation_scale = 1.0
+        
+        return min(distance_scale, orientation_scale, 1.0)
+
+    def compute_twist_command(self, current_pos, current_quat, target_pos, target_quat):
+        pos_error_vector = target_pos - current_pos
+        distance_to_target = np.linalg.norm(pos_error_vector)
+        orientation_error = self.compute_orientation_error(current_quat, target_quat)
+        
+        pos_weight, ori_weight = self.compute_blending_weights(distance_to_target, orientation_error)
+        
+        linear_vel = pos_error_vector * self.position_gain_base * pos_weight
+        angular_vel = self.compute_angular_velocity_from_quaternion_error(current_quat, target_quat) * self.orientation_gain_base * ori_weight
+        
+        velocity_scale = self.compute_velocity_scaling(distance_to_target, orientation_error)
+        linear_vel *= velocity_scale
+        angular_vel *= velocity_scale
+        
+        if self.servo_phase == "COARSE_APPROACH":
+            max_linear = self.max_linear_velocity_coarse
+            max_angular = self.max_angular_velocity_coarse
+        else:
+            max_linear = self.max_linear_velocity_fine
+            max_angular = self.max_angular_velocity_fine
+        
+        linear_speed = np.linalg.norm(linear_vel)
+        if linear_speed > max_linear:
+            linear_vel = linear_vel * (max_linear / linear_speed)
+        
+        angular_speed = np.linalg.norm(angular_vel)
+        if angular_speed > max_angular:
+            angular_vel = angular_vel * (max_angular / angular_speed)
+            
+        return linear_vel, angular_vel, distance_to_target, orientation_error
+
     def move_joint(self, target_joints):
         if self.joint_positions is None: return False
         
@@ -104,8 +211,8 @@ class ManipulationNode(Node):
             self.stop_robot()
             return True
             
-        vel = error * 2.0 # Gain
-        vel = np.clip(vel, -1.0, 1.0)
+        vel = error * self.joint_gain
+        vel = np.clip(vel, -self.max_joint_velocity, self.max_joint_velocity)
         
         msg = Float64MultiArray()
         msg.data = vel.tolist()
@@ -113,37 +220,26 @@ class ManipulationNode(Node):
         return False
 
     def move_cartesian(self, target_pos, target_quat):
-        # Simple P-controller for Cartesian
-        current_pos, current_quat = self.get_tf("tool0") # Assuming tool0 is EE
+        current_pos, current_quat = self.get_tf("tool0") 
         if current_pos is None: return False
         
-        pos_error = target_pos - current_pos
-        dist = np.linalg.norm(pos_error)
+        # Phase transition
+        pos_error = np.linalg.norm(target_pos - current_pos)
+        if self.use_fine_control and self.servo_phase == "COARSE_APPROACH" and pos_error < self.close_distance:
+            self.servo_phase = "FINE_TUNE"
+            
+        linear_vel, angular_vel, dist, ori_err = self.compute_twist_command(
+            current_pos, current_quat, target_pos, target_quat
+        )
         
-        # Orientation error
-        r_curr = Rotation.from_quat(current_quat)
-        r_targ = Rotation.from_quat(target_quat)
-        r_diff = r_targ * r_curr.inv()
-        rot_vec = r_diff.as_rotvec()
-        rot_err = np.linalg.norm(rot_vec)
-        
-        if dist < self.position_tolerance and rot_err < self.orientation_tolerance:
+        if dist < self.position_tolerance and ori_err < self.orientation_tolerance:
             self.stop_robot()
+            self.servo_phase = "COARSE_APPROACH" # Reset for next move
             return True
             
-        lin_vel = pos_error * 2.0
-        ang_vel = rot_vec * 2.0
-        
-        # Scale
-        lin_speed = np.linalg.norm(lin_vel)
-        if lin_speed > 0.2: lin_vel *= (0.2 / lin_speed)
-        
-        ang_speed = np.linalg.norm(ang_vel)
-        if ang_speed > 0.5: ang_vel *= (0.5 / ang_speed)
-        
         msg = Twist()
-        msg.linear.x, msg.linear.y, msg.linear.z = lin_vel
-        msg.angular.x, msg.angular.y, msg.angular.z = ang_vel
+        msg.linear.x, msg.linear.y, msg.linear.z = float(linear_vel[0]), float(linear_vel[1]), float(linear_vel[2])
+        msg.angular.x, msg.angular.y, msg.angular.z = float(angular_vel[0]), float(angular_vel[1]), float(angular_vel[2])
         self.twist_pub.publish(msg)
         return False
 
@@ -198,7 +294,9 @@ class ManipulationNode(Node):
                 self.get_logger().info(f"Found {fruit_frame}. Moving to APPROACH_FRUIT")
                 self.current_state = "APPROACH_FRUIT"
             else:
-                if self.fruit_index > 5: 
+                # If we tried enough times or index is high, move to fertilizer
+                # Fix: Stop if index > max_fruits (e.g., if max=2, stop at 3)
+                if self.fruit_index > self.max_fruits: 
                     self.get_logger().info("No more fruits found. Moving to Fertilizer.")
                     self.next_state = "SEARCH_FERTILIZER"
                     self.current_state = "MOVE_TO_MIDPOINT"
