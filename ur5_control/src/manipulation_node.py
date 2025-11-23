@@ -51,9 +51,9 @@ class ManipulationNode(Node):
         self.joint_tolerance = 0.1
         
         # Velocity limits
-        self.max_joint_velocity = 1.5
-        self.max_linear_velocity_coarse = 0.5
-        self.max_angular_velocity_coarse = 1.0
+        self.max_joint_velocity = 3.0
+        self.max_linear_velocity_coarse = 2.0
+        self.max_angular_velocity_coarse = 2.0
         self.max_linear_velocity_fine = 0.19
         self.max_angular_velocity_fine = 0.7
         
@@ -203,11 +203,12 @@ class ManipulationNode(Node):
             
         return linear_vel, angular_vel, distance_to_target, orientation_error
 
-    def move_joint(self, target_joints):
+    def move_joint(self, target_joints, tolerance=None):
         if self.joint_positions is None: return False
         
+        tol = tolerance if tolerance is not None else self.joint_tolerance
         error = target_joints - self.joint_positions
-        if np.max(np.abs(error)) < self.joint_tolerance:
+        if np.max(np.abs(error)) < tol:
             self.stop_robot()
             return True
             
@@ -249,7 +250,7 @@ class ManipulationNode(Node):
         msg.data = [0.0]*6
         self.joint_pub.publish(msg)
 
-    def get_approach_pose(self, target_pos, target_quat, offset_dist, axis='z'):
+    def get_approach_pose(self, target_pos, target_quat, offset_dist, axis='z', subtract_offset=True):
         # Calculate approach pose by backing up along the specified axis of the target orientation
         r = Rotation.from_quat(target_quat)
         matrix = r.as_matrix()
@@ -261,7 +262,11 @@ class ManipulationNode(Node):
         else:
             offset_vec = np.zeros(3)
             
-        approach_pos = target_pos - offset_vec # Back up from target
+        if subtract_offset:
+            approach_pos = target_pos - offset_vec # Back up (Standard)
+        else:
+            approach_pos = target_pos + offset_vec # Forward/Add (User requested for Fertilizer)
+            
         return approach_pos, target_quat
 
     def control_loop(self):
@@ -271,11 +276,12 @@ class ManipulationNode(Node):
         
         if self.current_state == "INIT":
             self.get_logger().info("State: INIT -> Moving to Safe Mid-Point")
-            self.next_state = "SEARCH_FRUIT"
+            self.next_state = "SEARCH_FERTILIZER"
             self.current_state = "MOVE_TO_MIDPOINT"
             
         elif self.current_state == "MOVE_TO_MIDPOINT":
-            if self.move_joint(self.safe_transit_joints):
+            # Relaxed tolerance for mid-point (0.3 rad)
+            if self.move_joint(self.safe_transit_joints, tolerance=0.3):
                 self.get_logger().info(f"Reached Mid-Point. Transitioning to {self.next_state}")
                 self.current_state = self.next_state
                 time.sleep(0.5)
@@ -291,28 +297,16 @@ class ManipulationNode(Node):
                 r = Rotation.from_euler('xyz', [np.pi, 0, 0])
                 self.target_fruit_quat = r.as_quat() 
                 
-                self.get_logger().info(f"Found {fruit_frame}. Moving to APPROACH_FRUIT")
-                self.current_state = "APPROACH_FRUIT"
+                self.get_logger().info(f"Found {fruit_frame}. Moving directly to GRASP_FRUIT")
+                self.current_state = "GRASP_FRUIT"
             else:
-                # If we tried enough times or index is high, move to fertilizer
-                # Fix: Stop if index > max_fruits (e.g., if max=2, stop at 3)
+                # If we tried enough times or index is high, stop
                 if self.fruit_index > self.max_fruits: 
-                    self.get_logger().info("No more fruits found. Moving to Fertilizer.")
-                    self.next_state = "SEARCH_FERTILIZER"
-                    self.current_state = "MOVE_TO_MIDPOINT"
+                    self.get_logger().info("No more fruits found. Mission Complete.")
+                    self.current_state = "DONE"
                 else:
                     # Retry or just wait
                     pass
-
-        elif self.current_state == "APPROACH_FRUIT":
-            approach_pos, approach_quat = self.get_approach_pose(
-                self.target_fruit_pos, self.target_fruit_quat, 0.15, axis='z'
-            )
-            
-            if self.move_cartesian(approach_pos, approach_quat):
-                self.get_logger().info("Reached Approach Pose. Moving to GRASP_FRUIT")
-                self.current_state = "GRASP_FRUIT"
-                time.sleep(0.5)
 
         elif self.current_state == "GRASP_FRUIT":
             grasp_pos = self.target_fruit_pos.copy()
@@ -363,15 +357,22 @@ class ManipulationNode(Node):
                 r_ee = Rotation.from_matrix(m_ee)
                 self.target_can_quat = r_ee.as_quat()
                 
+                self.get_logger().info(f"SEARCH_FERTILIZER: Found Can at {pos}")
                 self.get_logger().info("Found Fertilizer Can. Moving to APPROACH_FERTILIZER")
                 self.current_state = "APPROACH_FERTILIZER"
             else:
                 self.get_logger().info("Searching for Fertilizer...")
 
         elif self.current_state == "APPROACH_FERTILIZER":
+            # 0.2m approach offset, ADDED (subtract_offset=False)
             approach_pos, approach_quat = self.get_approach_pose(
-                self.target_can_pos, self.target_can_quat, 0.25, axis='z'
+                self.target_can_pos, self.target_can_quat, 0.2, axis='z', subtract_offset=False
             )
+            
+            # Concise Debug Log
+            curr_p, _ = self.get_tf("tool0")
+            if curr_p is not None:
+                self.get_logger().info(f"Approach Target: {approach_pos}, Current: {curr_p}")
             
             if self.move_cartesian(approach_pos, approach_quat):
                 self.get_logger().info("Reached Approach Pose. Moving to GRASP_FERTILIZER")
@@ -379,8 +380,9 @@ class ManipulationNode(Node):
                 time.sleep(0.5)
 
         elif self.current_state == "GRASP_FERTILIZER":
+            # 0.1m grasp offset, ADDED (subtract_offset=False)
             grasp_pos, _ = self.get_approach_pose(
-                self.target_can_pos, self.target_can_quat, 0.12, axis='z'
+                self.target_can_pos, self.target_can_quat, 0.1, axis='z', subtract_offset=False
             )
             
             if self.move_cartesian(grasp_pos, self.target_can_quat):
@@ -399,8 +401,9 @@ class ManipulationNode(Node):
                 
                 if self.move_cartesian(landing_pos, landing_quat):
                     self.call_detach_service("fertiliser_can")
-                    self.get_logger().info("Placed Fertilizer. Mission Complete!")
-                    self.current_state = "DONE"
+                    self.get_logger().info("Placed Fertilizer. Moving to Mid-Point before Fruits.")
+                    self.next_state = "SEARCH_FRUIT" # Proceed to fruits
+                    self.current_state = "MOVE_TO_MIDPOINT"
             else:
                 self.get_logger().info("Searching for landing_ebot...")
 

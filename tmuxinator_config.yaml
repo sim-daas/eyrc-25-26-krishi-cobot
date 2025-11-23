@@ -12,4 +12,4 @@ windows:
   - arm:
       - ros2 launch ur_simulation_gz spawn_arm.launch.py
   - blank:
-      - sleep 10000
+      - python3 /root/robows/src/eyrc-25-26/ur5_control/src/perception_node.py
