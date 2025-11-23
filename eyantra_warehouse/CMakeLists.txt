@@ -60,6 +60,8 @@ install(
 
 install(
   PROGRAMS scripts/custom_nav.py
+  scripts/ebot_nav_task2a.py
+  scripts/shape_detector_task2a.py
   DESTINATION lib/${PROJECT_NAME}
 )
 ament_package()
