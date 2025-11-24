@@ -415,7 +415,8 @@ class ManipulationNode(Node):
             retract_pos = self.target_can_pos.copy()
             retract_pos[1] += 0.55 # Add 0.3m to Y
             
-            if self.move_cartesian(retract_pos, self.target_can_quat, tolerance=0.1):
+            # Relaxed tolerance to ensure transition
+            if self.move_cartesian(retract_pos, self.target_can_quat, tolerance=0.2, orientation_tolerance=0.5):
                 self.get_logger().info("Retracted to fixed point. Moving to Mid-Point before Landing.")
                 self.next_state = "APPROACH_LANDING"
                 self.current_state = "MOVE_TO_MIDPOINT"
