@@ -7,9 +7,12 @@ on_project_start: |
   source install/setup.bash
 
 windows:
-  - warehouse:
-      - ros2 launch eyantra_warehouse task2b.launch.py
-  - arm:
-      - ros2 launch ur_simulation_gz spawn_arm.launch.py
-  - blank:
-      - python3 /root/robows/src/eyrc-25-26/ur5_control/src/perception_node.py
+  - main:
+      layout: tiled
+      panes:
+        - ros2 launch eyantra_warehouse task2b.launch.py
+        - ros2 launch ur_simulation_gz spawn_arm.launch.py
+        - sleep 33 && python3 /root/robows/src/eyrc-25-26/ur5_control/src/perception_node.py
+        - sleep 34 && python3 /root/robows/src/eyrc-25-26/ur5_control/src/manipulation_node.py
+  - eval:
+      - sleep 32 && eyantra-autoeval evaluate --year 2025 --theme KC --task 2B
