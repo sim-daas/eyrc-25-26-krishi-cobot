@@ -44,6 +44,14 @@ class ManipulationNode(Node):
              0.0     # wrist_3_joint
         ])
         self.bin_pose = (np.array([-0.806, 0.010, 0.182]), np.array([-0.684, 0.726, 0.05, 0.008])) # P3 from arm_control
+        self.safe_transit_joints_fruits = np.array([
+            1.596,  # shoulder_pan_joint
+            -1.392,  # shoulder_lift_joint
+             0.832,    # elbow_joint
+             -1.392,    # wrist_1_joint
+            -1.732,    # wrist_2_joint
+             -0.57     # wrist_3_joint
+        ])
         
         # --- State ---
         self.joint_positions = None
@@ -295,8 +303,11 @@ class ManipulationNode(Node):
             self.current_state = "MOVE_TO_MIDPOINT"
             
         elif self.current_state == "MOVE_TO_MIDPOINT":
+            # Choose safe joints based on phase
+            target_joints = self.safe_transit_joints_fruits if self.fertilizer_done else self.safe_transit_joints
+            
             # Relaxed tolerance for mid-point (0.3 rad)
-            if self.move_joint(self.safe_transit_joints, tolerance=0.3):
+            if self.move_joint(target_joints, tolerance=0.3):
                 self.get_logger().info(f"Reached Mid-Point. Transitioning to {self.next_state}")
                 self.current_state = self.next_state
                 time.sleep(0.5)
@@ -312,8 +323,8 @@ class ManipulationNode(Node):
                 r = Rotation.from_euler('xyz', [np.pi, 0, 0])
                 self.target_fruit_quat = r.as_quat() 
                 
-                self.get_logger().info(f"Found {fruit_frame}. Moving directly to GRASP_FRUIT")
-                self.current_state = "GRASP_FRUIT"
+                self.get_logger().info(f"Found {fruit_frame}. Moving to APPROACH_FRUIT")
+                self.current_state = "APPROACH_FRUIT"
             else:
                 # If we tried enough times or index is high, stop
                 if self.fruit_index > self.max_fruits: 
@@ -322,6 +333,16 @@ class ManipulationNode(Node):
                 else:
                     # Retry or just wait
                     pass
+
+        elif self.current_state == "APPROACH_FRUIT":
+            approach_pos, approach_quat = self.get_approach_pose(
+                self.target_fruit_pos, self.target_fruit_quat, 0.15, axis='z'
+            )
+            
+            if self.move_cartesian(approach_pos, approach_quat):
+                self.get_logger().info("Reached Approach Pose. Moving to GRASP_FRUIT")
+                self.current_state = "GRASP_FRUIT"
+                time.sleep(0.5)
 
         elif self.current_state == "GRASP_FRUIT":
             grasp_pos = self.target_fruit_pos.copy()
@@ -467,6 +488,7 @@ class ManipulationNode(Node):
                 
                 if self.move_cartesian(retract_pos, landing_quat, tolerance=0.1):
                     self.get_logger().info("Retracted from Landing. Moving to Mid-Point before Fruits.")
+                    self.fertilizer_done = True # Switch to Fruit Transit Joints
                     self.next_state = "SEARCH_FRUIT"
                     self.current_state = "MOVE_TO_MIDPOINT"
 
