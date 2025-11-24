@@ -427,6 +427,7 @@ class ManipulationNode(Node):
                 # Approach: +0.1m X, +0.35m Z
                 approach_pos = landing_pos.copy()
                 approach_pos[2] += 0.45
+                approach_pos[1] += 0.1
                 
                 r = Rotation.from_euler('xyz', [1.57, 0, 0])
                 landing_quat = r.as_quat()
@@ -440,18 +441,33 @@ class ManipulationNode(Node):
         elif self.current_state == "DROP_FERTILIZER":
             landing_pos, _ = self.get_tf("landing_ebot")
             if landing_pos is not None:
-                # Drop: +0.1m X, +0.5m Z (Higher than approach?)
-                # User requested 0.5m height for ungrasping
+                # Drop at +0.08m Z (User Debugged)
                 drop_pos = landing_pos.copy()
                 drop_pos[2] += 0.15
+                drop_pos[1] += 0.1
                 
                 r = Rotation.from_euler('xyz', [1.57, 0, 0])
                 landing_quat = r.as_quat()
                 
                 if self.move_cartesian(drop_pos, landing_quat, tolerance=0.05):
                     self.call_detach_service("fertiliser_can")
-                    self.get_logger().info("Placed Fertilizer. Moving to Mid-Point before Fruits.")
-                    self.next_state = "SEARCH_FRUIT" # Proceed to fruits
+                    self.get_logger().info("Placed Fertilizer. Retracting to Approach Height...")
+                    self.current_state = "RETRACT_LANDING"
+
+        elif self.current_state == "RETRACT_LANDING":
+            landing_pos, _ = self.get_tf("landing_ebot")
+            if landing_pos is not None:
+                # Retract to Approach Height: +0.45m Z (User Debugged)
+                retract_pos = landing_pos.copy()
+                retract_pos[2] += 0.55
+                retract_pos[1] += 0.15
+                
+                r = Rotation.from_euler('xyz', [1.57, 0, 0])
+                landing_quat = r.as_quat()
+                
+                if self.move_cartesian(retract_pos, landing_quat, tolerance=0.1):
+                    self.get_logger().info("Retracted from Landing. Moving to Mid-Point before Fruits.")
+                    self.next_state = "SEARCH_FRUIT"
                     self.current_state = "MOVE_TO_MIDPOINT"
 
         elif self.current_state == "DONE":
