@@ -424,15 +424,15 @@ class ManipulationNode(Node):
         elif self.current_state == "APPROACH_LANDING":
             landing_pos, _ = self.get_tf("landing_ebot")
             if landing_pos is not None:
-                # Approach at +0.3m Z
+                # Approach: +0.1m X, +0.35m Z
                 approach_pos = landing_pos.copy()
-                approach_pos[2] += 0.3
+                approach_pos[2] += 0.45
                 
-                r = Rotation.from_euler('xyz', [np.pi, 0, 0])
+                r = Rotation.from_euler('xyz', [1.57, 0, 0])
                 landing_quat = r.as_quat()
                 
                 if self.move_cartesian(approach_pos, landing_quat, tolerance=0.1):
-                    self.get_logger().info("Reached Landing Approach. Lowering to Drop...")
+                    self.get_logger().info("Reached Landing Approach. Positioning for Drop...")
                     self.current_state = "DROP_FERTILIZER"
             else:
                 self.get_logger().info("Searching for landing_ebot...")
@@ -440,11 +440,12 @@ class ManipulationNode(Node):
         elif self.current_state == "DROP_FERTILIZER":
             landing_pos, _ = self.get_tf("landing_ebot")
             if landing_pos is not None:
-                # Drop at +0.25m Z
+                # Drop: +0.1m X, +0.5m Z (Higher than approach?)
+                # User requested 0.5m height for ungrasping
                 drop_pos = landing_pos.copy()
-                drop_pos[2] += 0.25
+                drop_pos[2] += 0.15
                 
-                r = Rotation.from_euler('xyz', [np.pi, 0, 0])
+                r = Rotation.from_euler('xyz', [1.57, 0, 0])
                 landing_quat = r.as_quat()
                 
                 if self.move_cartesian(drop_pos, landing_quat, tolerance=0.05):
