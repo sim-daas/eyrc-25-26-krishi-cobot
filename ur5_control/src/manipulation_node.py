@@ -33,8 +33,16 @@ class ManipulationNode(Node):
         # --- Constants ---
         self.team_id = 1505
         self.home_joints = np.array([-1.57, -1.57, 0.0, -1.57, 0.0, 0.0]) # Example home
-        # SAFE TRANSIT JOINT CONFIGURATION (from arm_control.py)
-        self.safe_transit_joints = np.array([-3.973, -1.596, 0.0, 0.0, 0.0, 0.0])
+        # SAFE TRANSIT JOINT CONFIGURATION (Updated to avoid singularity)
+        # Pan, Lift, Elbow, Wrist1, Wrist2, Wrist3
+        self.safe_transit_joints = np.array([
+            -3.973,  # shoulder_pan_joint
+            -1.596,  # shoulder_lift_joint
+             0.0,    # elbow_joint
+             0.0,    # wrist_1_joint
+             0.0,    # wrist_2_joint
+             0.0     # wrist_3_joint
+        ])
         self.bin_pose = (np.array([-0.806, 0.010, 0.182]), np.array([-0.684, 0.726, 0.05, 0.008])) # P3 from arm_control
         
         # --- State ---
@@ -44,6 +52,7 @@ class ManipulationNode(Node):
         self.fruit_index = 0
         self.max_fruits = 2 # Try up to 3 fruits, or until lookup fails
         self.fertilizer_done = False
+        self.debug_counter = 0 # For logging
         
         # --- Control Params (Restored from arm_control.py) ---
         self.position_tolerance = 0.09 # Tighter for grasping
@@ -208,6 +217,12 @@ class ManipulationNode(Node):
         
         tol = tolerance if tolerance is not None else self.joint_tolerance
         error = target_joints - self.joint_positions
+        
+        self.debug_counter += 1
+        if self.debug_counter % 50 == 0:
+            max_err = np.max(np.abs(error))
+            self.get_logger().info(f"Joint Error Max: {max_err:.3f}")
+            
         if np.max(np.abs(error)) < tol:
             self.stop_robot()
             return True
@@ -220,9 +235,13 @@ class ManipulationNode(Node):
         self.joint_pub.publish(msg)
         return False
 
-    def move_cartesian(self, target_pos, target_quat):
+    def move_cartesian(self, target_pos, target_quat, tolerance=None, orientation_tolerance=None):
         current_pos, current_quat = self.get_tf("tool0") 
         if current_pos is None: return False
+        
+        # Use provided tolerance or default
+        pos_tol = tolerance if tolerance is not None else self.position_tolerance
+        ori_tol = orientation_tolerance if orientation_tolerance is not None else self.orientation_tolerance
         
         # Phase transition
         pos_error = np.linalg.norm(target_pos - current_pos)
@@ -233,7 +252,7 @@ class ManipulationNode(Node):
             current_pos, current_quat, target_pos, target_quat
         )
         
-        if dist < self.position_tolerance and ori_err < self.orientation_tolerance:
+        if dist < pos_tol and ori_err < ori_tol:
             self.stop_robot()
             self.servo_phase = "COARSE_APPROACH" # Reset for next move
             return True
@@ -250,7 +269,7 @@ class ManipulationNode(Node):
         msg.data = [0.0]*6
         self.joint_pub.publish(msg)
 
-    def get_approach_pose(self, target_pos, target_quat, offset_dist, axis='z', subtract_offset=True):
+    def get_approach_pose(self, target_pos, target_quat, offset_dist, axis='z'):
         # Calculate approach pose by backing up along the specified axis of the target orientation
         r = Rotation.from_quat(target_quat)
         matrix = r.as_matrix()
@@ -262,11 +281,7 @@ class ManipulationNode(Node):
         else:
             offset_vec = np.zeros(3)
             
-        if subtract_offset:
-            approach_pos = target_pos - offset_vec # Back up (Standard)
-        else:
-            approach_pos = target_pos + offset_vec # Forward/Add (User requested for Fertilizer)
-            
+        approach_pos = target_pos - offset_vec # Back up from target
         return approach_pos, target_quat
 
     def control_loop(self):
@@ -312,7 +327,8 @@ class ManipulationNode(Node):
             grasp_pos = self.target_fruit_pos.copy()
             grasp_pos[2] += 0.02 
             
-            if self.move_cartesian(grasp_pos, self.target_fruit_quat):
+            # Tight tolerance for fruit grasp
+            if self.move_cartesian(grasp_pos, self.target_fruit_quat, tolerance=0.02):
                 self.call_attach_service("bad_fruit")
                 time.sleep(1.0) 
                 self.get_logger().info("Attached Fruit. Retracting...")
@@ -343,14 +359,14 @@ class ManipulationNode(Node):
             if pos is not None:
                 self.target_can_pos = pos
                 
-                # Orientation: Align EE Z-axis with Can Y-axis.
+                # Orientation: Align EE Z-axis with Can -Y axis (Negative Y).
                 _, can_quat = self.get_tf("1505_fertiliser_can")
                 r_can = Rotation.from_quat(can_quat)
                 m_can = r_can.as_matrix()
                 x_c, y_c, z_c = m_can[:,0], m_can[:,1], m_can[:,2]
                 
-                z_ee = y_c # Align EE Z with Can Y
-                y_ee = z_c # Align EE Y with Can Z
+                z_ee = -y_c # Align EE Z with Can -Y
+                y_ee = z_c  # Align EE Y with Can Z
                 x_ee = np.cross(y_ee, z_ee)
                 
                 m_ee = np.column_stack((x_ee, y_ee, z_ee))
@@ -364,9 +380,9 @@ class ManipulationNode(Node):
                 self.get_logger().info("Searching for Fertilizer...")
 
         elif self.current_state == "APPROACH_FERTILIZER":
-            # 0.2m approach offset, ADDED (subtract_offset=False)
+            # 0.15m approach offset (Matched to Fruit System)
             approach_pos, approach_quat = self.get_approach_pose(
-                self.target_can_pos, self.target_can_quat, 0.2, axis='z', subtract_offset=False
+                self.target_can_pos, self.target_can_quat, 0.15, axis='z'
             )
             
             # Concise Debug Log
@@ -374,38 +390,67 @@ class ManipulationNode(Node):
             if curr_p is not None:
                 self.get_logger().info(f"Approach Target: {approach_pos}, Current: {curr_p}")
             
-            if self.move_cartesian(approach_pos, approach_quat):
+            # Loose tolerance for approach (0.08m pos, 0.5 rad ori)
+            if self.move_cartesian(approach_pos, approach_quat, tolerance=0.08, orientation_tolerance=0.5):
                 self.get_logger().info("Reached Approach Pose. Moving to GRASP_FERTILIZER")
                 self.current_state = "GRASP_FERTILIZER"
                 time.sleep(0.5)
 
         elif self.current_state == "GRASP_FERTILIZER":
-            # 0.1m grasp offset, ADDED (subtract_offset=False)
+            # 0.02m grasp offset (Close grasp, matched to Fruit System)
             grasp_pos, _ = self.get_approach_pose(
-                self.target_can_pos, self.target_can_quat, 0.1, axis='z', subtract_offset=False
+                self.target_can_pos, self.target_can_quat, 0.02, axis='z'
             )
             
-            if self.move_cartesian(grasp_pos, self.target_can_quat):
+            # Tight tolerance for grasp (0.02m)
+            if self.move_cartesian(grasp_pos, self.target_can_quat, tolerance=0.02):
                 self.call_attach_service("fertiliser_can")
                 time.sleep(1.0)
-                self.get_logger().info("Attached Fertilizer. Moving to Mid-Point before Landing.")
-                self.next_state = "MOVE_TO_LANDING"
+                self.get_logger().info("Attached Fertilizer. Retracting along +Y...")
+                self.current_state = "RETRACT_FERTILIZER"
+
+        elif self.current_state == "RETRACT_FERTILIZER":
+            # Move to fixed point: Target + 0.3m along World +Y axis
+            # Using static target_can_pos prevents the "receding target" bug
+            retract_pos = self.target_can_pos.copy()
+            retract_pos[1] += 0.55 # Add 0.3m to Y
+            
+            if self.move_cartesian(retract_pos, self.target_can_quat, tolerance=0.1):
+                self.get_logger().info("Retracted to fixed point. Moving to Mid-Point before Landing.")
+                self.next_state = "APPROACH_LANDING"
                 self.current_state = "MOVE_TO_MIDPOINT"
 
-        elif self.current_state == "MOVE_TO_LANDING":
+        elif self.current_state == "APPROACH_LANDING":
             landing_pos, _ = self.get_tf("landing_ebot")
             if landing_pos is not None:
-                landing_pos[2] += 0.2
+                # Approach at +0.3m Z
+                approach_pos = landing_pos.copy()
+                approach_pos[2] += 0.3
+                
                 r = Rotation.from_euler('xyz', [np.pi, 0, 0])
                 landing_quat = r.as_quat()
                 
-                if self.move_cartesian(landing_pos, landing_quat):
+                if self.move_cartesian(approach_pos, landing_quat, tolerance=0.1):
+                    self.get_logger().info("Reached Landing Approach. Lowering to Drop...")
+                    self.current_state = "DROP_FERTILIZER"
+            else:
+                self.get_logger().info("Searching for landing_ebot...")
+
+        elif self.current_state == "DROP_FERTILIZER":
+            landing_pos, _ = self.get_tf("landing_ebot")
+            if landing_pos is not None:
+                # Drop at +0.25m Z
+                drop_pos = landing_pos.copy()
+                drop_pos[2] += 0.25
+                
+                r = Rotation.from_euler('xyz', [np.pi, 0, 0])
+                landing_quat = r.as_quat()
+                
+                if self.move_cartesian(drop_pos, landing_quat, tolerance=0.05):
                     self.call_detach_service("fertiliser_can")
                     self.get_logger().info("Placed Fertilizer. Moving to Mid-Point before Fruits.")
                     self.next_state = "SEARCH_FRUIT" # Proceed to fruits
                     self.current_state = "MOVE_TO_MIDPOINT"
-            else:
-                self.get_logger().info("Searching for landing_ebot...")
 
         elif self.current_state == "DONE":
             self.stop_robot()

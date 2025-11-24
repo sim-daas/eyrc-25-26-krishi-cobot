@@ -228,9 +228,8 @@ class PerceptionNode(Node):
             for child_frame_id, (x, y, z, rvec) in self.static_transforms.items():
                 self.publish_tf_from_camera_point(x, y, z, child_frame_id, trans, rvec)
             
-            if SHOW_IMAGE and self.frozen_image is not None:
-                cv2.imshow("perception_view", self.frozen_image)
-                cv2.waitKey(1)
+            if SHOW_IMAGE:
+                cv2.destroyAllWindows()
             return
 
         if self.cv_image is None or self.depth_image is None or self.image_stamp is None:
